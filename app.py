@@ -428,7 +428,6 @@ def dashboard(request: Request):
         except Exception:
             continue
     logging.warning(f"Extracted items: {len(extracted)}")
-    logging.warning(f"Filtered out (not Columbia-related): {filtered_out}")
     # split outputs
     notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter")]
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
