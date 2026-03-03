@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, List
@@ -370,12 +371,14 @@ def dashboard(request: Request):
     # schedule window
     now = datetime.now(timezone.utc)
     time_min = now
-    time_max = now + timedelta(days=7)
+    time_max = now + timedelta(days=30)
     busy = calendar_freebusy(cal, time_min, time_max)
 
     # fetch columbia-related messages
     ids = list_message_ids(gmail, GMAIL_QUERY, max_results=30)
+    logging.warning(f"Fetched message ids: {len(ids)}")
     emails = [fetch_full_email(gmail, mid) for mid in ids]
+    logging.warning(f"Emails fetched: {len(emails)}")
 
     extracted = []
     for e in emails:
@@ -388,11 +391,11 @@ def dashboard(request: Request):
             extracted.append(ex)
         except Exception:
             continue
-
+    logging.warning(f"Extracted items: {len(extracted)}")
     # split outputs
     notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter")]
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
-
+    logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")   
     # filter events: not past/yesterday, not conflicting
     candidates = []
     for ex in events:
@@ -439,9 +442,17 @@ def dashboard(request: Request):
 @app.post("/calendar/add")
 def add_to_calendar(request: Request, idx: int = Form(...)):
     if not request.session.get("google_creds"):
-        return RedirectResponse("/login")
+        return RedirectResponse("/login", status_code=303)
 
     top5 = request.session.get("last_top5") or []
+    logging.warning(f"calendar/add idx={idx} last_top5_len={len(top5)}")
+
+    if not top5:
+        return HTMLResponse(
+            "Your session does not have a generated Top 5 list. Please go back to Dashboard and generate again.",
+            status_code=400,
+        )
+
     if idx < 1 or idx > len(top5):
         return HTMLResponse("Invalid selection", status_code=400)
 
@@ -449,8 +460,8 @@ def add_to_calendar(request: Request, idx: int = Form(...)):
     request.session["google_creds"] = creds_to_session(creds)
     cal = cal_service(creds)
 
-    ex = top5[idx-1]["extracted"]
+    ex = top5[idx - 1]["extracted"]
     body = build_calendar_event(ex)
-    created = calendar_insert(cal, body)
+    _created = calendar_insert(cal, body)
 
     return RedirectResponse("/dashboard", status_code=303)
