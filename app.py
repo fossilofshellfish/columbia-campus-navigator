@@ -300,8 +300,15 @@ def set_prefs(request: Request, inc: list[str], exc: list[str]):
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 def home(request: Request):
     logged_in = bool(request.session.get("google_creds"))
-    return templates.TemplateResponse("index.html", {"request": request, "logged_in": logged_in})
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "logged_in": logged_in
+    })
     
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
 @app.get("/login")
 def login(request: Request):
     flow = build_flow()
