@@ -5,6 +5,8 @@ import json
 import os
 import re
 import logging
+import time
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, List
@@ -14,6 +16,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi.responses import JSONResponse
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -36,8 +39,6 @@ OAUTH_CLIENT_JSON_B64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64", "")
 
 SCOPES = [
     "openid",
-    "email",
-    "profile",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -209,15 +210,17 @@ Rules:
 - Extract RSVP/registration link if present.
 """
 
-def llm_json(system: str, payload: dict) -> dict:
-    text = json.dumps(payload, ensure_ascii=False)
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role":"system","content":system},{"role":"user","content":text}],
-        temperature=0.2,
-    )
-    out = resp.choices[0].message.content.strip()
-    return json.loads(out)
+def llm_json(system_prompt: str, payload: dict, max_retries: int = 5):
+    last = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _llm_json_once(system_prompt, payload)  # 你原来那次真正调用 OpenAI 的逻辑
+        except (APIConnectionError, APITimeoutError, RateLimitError) as err:
+            last = err
+            wait = min(2 ** attempt, 20)
+            logging.warning(f"OpenAI retry {attempt}/{max_retries}: {type(err).__name__}: {err} (sleep {wait}s)")
+            time.sleep(wait)
+    raise last
 
 
 # ---------------- Ranking / constraints ----------------
@@ -340,6 +343,13 @@ def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/")
 
+@app.get("/debug/openai")
+def debug_openai():
+    return JSONResponse({
+        "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "key_prefix": (os.getenv("OPENAI_API_KEY","")[:3] if os.getenv("OPENAI_API_KEY") else None),
+    })
+
 @app.get("/prefs", response_class=HTMLResponse)
 def prefs_page(request: Request):
     if not request.session.get("google_creds"):
@@ -440,6 +450,8 @@ def dashboard(request: Request):
     logging.warning(f"Fetched message ids: {len(ids)}")
     emails = [fetch_full_email(gmail, mid) for mid in ids]
     logging.warning(f"Emails fetched: {len(emails)}")
+
+    emails = emails[:8]   # 先最多 8 封
 
     extracted = []
     for e in emails:
