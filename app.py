@@ -356,36 +356,61 @@ def prefs_save(request: Request, include_keywords: str = Form(""), exclude_keywo
 
 
 
+
 KEYWORDS = ("columbia", "sipa", "canvas")
 
-def is_columbia_related(email: dict) -> bool:
-    """
-    True if any part of the email indicates Columbia relevance:
-    - keyword appears in subject/snippet/body (columbia/sipa/canvas)
-    - or sender domain ends with columbia.edu (including subdomains)
-    - or recipient/cc contains @columbia.edu
-    """
-    subject = (email.get("subject") or "")
-    snippet = (email.get("snippet") or "")
-    body = (email.get("body_text") or "")
+_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 
-    # Keyword scan (subject/snippet/body)
-    blob = f"{subject}\n{snippet}\n{body}".lower()
+def _get_header(email: dict, name: str) -> str:
+    """
+    Tries multiple places to find headers: top-level keys or email['headers'].
+    Supports headers as dict or list of {'name','value'}.
+    """
+    # common top-level shortcuts
+    if name.lower() == "from":
+        for k in ("from", "sender", "from_"):
+            v = email.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+    if name.lower() == "subject":
+        for k in ("subject", "Subject"):
+            v = email.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+
+    hdrs = email.get("headers")
+    if isinstance(hdrs, dict):
+        v = hdrs.get(name) or hdrs.get(name.lower()) or hdrs.get(name.title())
+        return v if isinstance(v, str) else ""
+    if isinstance(hdrs, list):
+        for item in hdrs:
+            if not isinstance(item, dict):
+                continue
+            if (item.get("name") or "").lower() == name.lower():
+                return item.get("value") or ""
+    return ""
+
+def is_columbia_related(email: dict) -> bool:
+    # text fields (try multiple keys)
+    subject = _get_header(email, "Subject") or (email.get("subject") or "")
+    frm = _get_header(email, "From") or (email.get("from") or "")
+    snippet = (email.get("snippet") or "")
+    body = (email.get("body_text") or email.get("body") or "")
+
+    blob = f"{subject}\n{frm}\n{snippet}\n{body}".lower()
     if any(k in blob for k in KEYWORDS):
         return True
 
-    # Sender domain check
-    frm = (email.get("from") or "").lower()
-    # extracts any emails found in the From header
-    addrs = re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", frm, flags=re.I)
-    for a in addrs:
-        domain = a.split("@", 1)[1]
+    # sender domain
+    for addr in _EMAIL_RE.findall(frm):
+        domain = addr.split("@", 1)[1].lower()
         if domain == "columbia.edu" or domain.endswith(".columbia.edu"):
             return True
 
-    # Optional: To/Cc domain check if you store these fields
-    to_cc = (email.get("to", "") + " " + email.get("cc", "")).lower()
-    if "@columbia.edu" in to_cc:
+    # optional: recipients
+    to_hdr = _get_header(email, "To") or (email.get("to") or "")
+    cc_hdr = _get_header(email, "Cc") or (email.get("cc") or "")
+    if "@columbia.edu" in (to_hdr + " " + cc_hdr).lower():
         return True
 
     return False
@@ -419,6 +444,14 @@ def dashboard(request: Request):
     extracted = []
     for e in emails:
         # hard guarantee: must contain "columbia" anywhere
+        if 'printed_debug' not in request.session:
+            request.session['printed_debug'] = True
+            logging.warning(f"DEBUG keys: {sorted(list(e.keys()))}")
+            logging.warning(f"DEBUG subject: {repr(e.get('subject'))}")
+            logging.warning(f"DEBUG from: {repr(e.get('from'))}")
+            logging.warning(f"DEBUG snippet: {repr(e.get('snippet'))[:200]}")
+            logging.warning(f"DEBUG body_text_len: {len((e.get('body_text') or ''))}")
+            logging.warning(f"DEBUG headers: {repr(e.get('headers'))[:400]}")
         if not is_columbia_related(e):
             logging.warning(f"Email {e['id']} is not Columbia-related")
             continue
@@ -426,6 +459,7 @@ def dashboard(request: Request):
             ex = llm_json(EMAIL_SYSTEM, {"email": e, "preferences": prefs, "busy_blocks": busy})
             extracted.append(ex)
         except Exception:
+            logging.warning(f"LLM failed: {type(err).__name__}: {err}")
             continue
     logging.warning(f"Extracted items: {len(extracted)}")
     # split outputs
