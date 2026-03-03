@@ -354,6 +354,42 @@ def prefs_save(request: Request, include_keywords: str = Form(""), exclude_keywo
     set_prefs(request, inc, exc)
     return RedirectResponse("/dashboard", status_code=303)
 
+
+
+KEYWORDS = ("columbia", "sipa", "canvas")
+
+def is_columbia_related(email: dict) -> bool:
+    """
+    True if any part of the email indicates Columbia relevance:
+    - keyword appears in subject/snippet/body (columbia/sipa/canvas)
+    - or sender domain ends with columbia.edu (including subdomains)
+    - or recipient/cc contains @columbia.edu
+    """
+    subject = (email.get("subject") or "")
+    snippet = (email.get("snippet") or "")
+    body = (email.get("body_text") or "")
+
+    # Keyword scan (subject/snippet/body)
+    blob = f"{subject}\n{snippet}\n{body}".lower()
+    if any(k in blob for k in KEYWORDS):
+        return True
+
+    # Sender domain check
+    frm = (email.get("from") or "").lower()
+    # extracts any emails found in the From header
+    addrs = re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", frm, flags=re.I)
+    for a in addrs:
+        domain = a.split("@", 1)[1]
+        if domain == "columbia.edu" or domain.endswith(".columbia.edu"):
+            return True
+
+    # Optional: To/Cc domain check if you store these fields
+    to_cc = (email.get("to", "") + " " + email.get("cc", "")).lower()
+    if "@columbia.edu" in to_cc:
+        return True
+
+    return False
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     if not request.session.get("google_creds"):
@@ -383,8 +419,8 @@ def dashboard(request: Request):
     extracted = []
     for e in emails:
         # hard guarantee: must contain "columbia" anywhere
-        blob = (e.get("subject","") + " " + e.get("snippet","") + " " + e.get("body_text","")).lower()
-        if "columbia" not in blob:
+        if not is_columbia_related(e):
+            logging.warning(f"Email {e['id']} is not Columbia-related")
             continue
         try:
             ex = llm_json(EMAIL_SYSTEM, {"email": e, "preferences": prefs, "busy_blocks": busy})
@@ -392,6 +428,7 @@ def dashboard(request: Request):
         except Exception:
             continue
     logging.warning(f"Extracted items: {len(extracted)}")
+    logging.warning(f"Filtered out (not Columbia-related): {filtered_out}")
     # split outputs
     notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter")]
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
