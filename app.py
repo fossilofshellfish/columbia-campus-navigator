@@ -34,7 +34,11 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 OAUTH_CLIENT_JSON_B64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64", "")
 
 SCOPES = [
-    "openid", "email", "profile",
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
@@ -304,7 +308,7 @@ def home(request: Request):
         "request": request,
         "logged_in": logged_in
     })
-    
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
