@@ -458,7 +458,7 @@ def dashboard(request: Request):
         try:
             ex = llm_json(EMAIL_SYSTEM, {"email": e, "preferences": prefs, "busy_blocks": busy})
             extracted.append(ex)
-        except Exception:
+        except Exception as err:
             logging.warning(f"LLM failed: {type(err).__name__}: {err}")
             continue
     logging.warning(f"Extracted items: {len(extracted)}")
