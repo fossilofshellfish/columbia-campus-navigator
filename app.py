@@ -210,17 +210,59 @@ Rules:
 - Extract RSVP/registration link if present.
 """
 
-def llm_json(system_prompt: str, payload: dict, max_retries: int = 5):
-    last = None
+_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> dict:
+    """
+    Calls OpenAI and expects a JSON object in the output.
+    Retries on transient connection/timeouts/rate limits.
+    """
+    last_err = None
+    user_text = json.dumps(payload, ensure_ascii=False)
+    # keep payload bounded (avoid huge emails)
+    user_text = user_text[:120000]
+
     for attempt in range(1, max_retries + 1):
         try:
-            return _llm_json_once(system_prompt, payload)  # 你原来那次真正调用 OpenAI 的逻辑
+            resp = _client.responses.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+            )
+
+            text = (resp.output_text or "").strip()
+            if not text:
+                raise ValueError("Empty model output")
+
+            # If model returns fenced JSON, strip fences
+            if text.startswith("```"):
+                text = text.strip("`")
+                # remove optional leading language tag
+                if "\n" in text:
+                    text = text.split("\n", 1)[1]
+
+            return json.loads(text)
+
         except (APIConnectionError, APITimeoutError, RateLimitError) as err:
-            last = err
+            last_err = err
             wait = min(2 ** attempt, 20)
             logging.warning(f"OpenAI retry {attempt}/{max_retries}: {type(err).__name__}: {err} (sleep {wait}s)")
             time.sleep(wait)
-    raise last
+
+        except json.JSONDecodeError as err:
+            # Not transient; log a short preview for debugging
+            preview = text[:300] if 'text' in locals() else ""
+            logging.warning(f"OpenAI returned non-JSON. First 300 chars: {preview}")
+            raise
+
+        except Exception as err:
+            # Not transient; surface it
+            raise
+
+    # exhausted retries
+    raise last_err if last_err else RuntimeError("OpenAI call failed")
 
 
 # ---------------- Ranking / constraints ----------------
