@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head><title>Dashboard</title></head>
+<body>
+  <h1>Weekly Dashboard</h1>
+  <p><a href="/prefs">Preferences</a> | <a href="/">Home</a> | <a href="/logout">Logout</a></p>
+
+  <h2>Weekly Top 5 (No conflicts, not in the past)</h2>
+  {% if not top5 %}
+    <p>No eligible events found in the next 7 days.</p>
+  {% endif %}
+
+  {% for item in top5 %}
+    <hr/>
+    <h3>{{ loop.index }}. {{ item.extracted.title }}</h3>
+    <p><b>Time:</b> {{ item.extracted.start_time }} → {{ item.extracted.end_time }}</p>
+    <p><b>Location:</b> {{ item.extracted.location }}</p>
+    <p><b>RSVP:</b> <a href="{{ item.extracted.rsvp_url }}" target="_blank">{{ item.extracted.rsvp_url }}</a></p>
+    <p><b>Summary:</b> {{ item.extracted.summary_en }}</p>
+    <p><b>Why recommended:</b> {{ item.extracted.why_recommended_en }}</p>
+
+    <form action="/calendar/add" method="post">
+      <input type="hidden" name="idx" value="{{ loop.index }}"/>
+      <button type="submit">Add to Google Calendar</button>
+    </form>
+  {% endfor %}
+
+  <hr/>
+  <h2>Course / Professor / School Notices</h2>
+  {% if notice_bulletin %}
+    <pre style="white-space: pre-wrap;">{{ notice_bulletin }}</pre>
+  {% else %}
+    <p>No bulletin summary available.</p>
+  {% endif %}
+
+  <h3>Items (sample)</h3>
+  <ul>
+    {% for n in notice_items %}
+      <li><b>[{{ n.category }}]</b> {{ n.title }} — {{ n.summary_en }}</li>
+    {% endfor %}
+  </ul>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head><title>Campus Navigator</title></head>
+<body>
+  <h1>Campus Event Navigator (Internal Demo)</h1>
+  {% if logged_in %}
+    <p>You are signed in.</p>
+    <a href="/prefs">Preferences</a> | <a href="/dashboard">Dashboard</a> | <a href="/logout">Logout</a>
+  {% else %}
+    <a href="/login">Sign in with Google</a>
+  {% endif %}
+</body>
+</html>

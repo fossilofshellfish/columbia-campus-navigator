@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><title>Preferences</title></head>
+<body>
+  <h1>Preferences</h1>
+  <p><a href="/dashboard">Go to Dashboard</a></p>
+
+  <form action="/prefs" method="post">
+    <label>Include keywords (comma-separated)</label><br/>
+    <input name="include_keywords" style="width:700px"
+      value="{{ prefs.include_keywords | join(', ') }}"/><br/><br/>
+
+    <label>Exclude keywords (comma-separated)</label><br/>
+    <input name="exclude_keywords" style="width:700px"
+      value="{{ prefs.exclude_keywords | join(', ') }}"/><br/><br/>
+
+    <button type="submit">Save</button>
+  </form>
+</body>
+</html>
