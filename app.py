@@ -189,39 +189,31 @@ def list_message_ids(gmail, q: str, max_results: int=30) -> list[str]:
 # ---------------- LLM: classification + extraction ----------------
 EMAIL_SYSTEM = """
 You are an assistant for Columbia University students.
-You will classify a Columbia-related email and extract structured information.
+Classify a Columbia-related email and extract structured information.
 
-Return ONLY valid JSON (no markdown).
-Schema:
-{
-  "category": "course_requirement|professor_notice|school_notice|other_notice|campus_event|lecture_talk|newsletter|other",
-  "confidence": 0-1,
-  "title": "...",
-  "start_time": "ISO8601 with timezone offset or null",
-  "end_time": "ISO8601 with timezone offset or null",
-  "timezone": "America/New_York",
-  "location": "string or null",
-  "online_or_in_person": "online|in_person|hybrid|unknown",
-  "rsvp_url": "string or null",
-  "summary_en": "concise English summary (<=70 words)",
-  "why_recommended_en": "short reason (<=45 words)"
-  “deadline_date: YYYY-MM-DD or null
-  "deadline_time: HH:MM(24h) or null
-  "deadline_tz: default "America/New_York"
-}
+Return ONLY a single JSON object (not an array), no markdown, no extra text.
 
-For notices (course/professor/school):
-- If there is a deadline/due date, extract deadline_date as YYYY-MM-DD.
-- If there is a specific time, also extract deadline_time as HH:MM (24-hour).
-- If only a date is provided, set deadline_time = null (backend will default to 09:00).
-- If no deadline exists, set deadline_date = null.
-- If deadline_date exists, set deadline_tz = "America/New_York" by default.
+Required JSON keys:
+- category: one of ["course_requirement","professor_notice","school_notice","other_notice","campus_event","lecture_talk","newsletter","other"]
+- confidence: number between 0 and 1
+- title: string
+- start_time: ISO8601 string with timezone offset, or null
+- end_time: ISO8601 string with timezone offset, or null
+- timezone: "America/New_York"
+- location: string or null
+- online_or_in_person: one of ["online","in_person","hybrid","unknown"]
+- rsvp_url: string or null
+- summary_en: string (<=70 words)
+- why_recommended_en: string (<=45 words)
+- deadline_date: "YYYY-MM-DD" or null
+- deadline_time: "HH:MM" (24h) or null
+- deadline_tz: "America/New_York"
 
 Rules:
-- If this is NOT an event/lecture, set start_time/end_time/location/rsvp_url to null.
-- If start_time exists but end_time is missing, set end_time = start_time + 60 minutes.
-- Extract RSVP/registration link if present.
-- Return start_time and end_time in ISO 8601 format. If timezone missing, assume America/New_York
+- For notices (course/professor/school/newsletter): if a deadline exists, fill deadline_date and optional deadline_time; else deadline_date=null.
+- For non-events: set start_time/end_time/location/rsvp_url to null.
+- If start_time exists but end_time missing, set end_time = start_time + 60 minutes.
+- If timezone missing in the email, assume America/New_York.
 """
 
 _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
