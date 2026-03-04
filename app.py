@@ -313,39 +313,44 @@ def has_conflict(st, et, busy_blocks: list[dict]) -> bool:
     return False
 
 
+
 def score_event(ex: dict, prefs: dict, conflict: bool) -> float:
-    s = 0
-
-    if conflict:
-        s -= 5
-    else:
-        s += 4
-
-    if ex.get("rsvp_url"):
-        s += 2
-
-    if ex.get("location"):
-        s += 1
-
-    if ex.get("start_time"):
-        s += 1
+    score = 0.0
 
     text = (ex.get("title","") + " " + ex.get("summary_en","")).lower()
 
-    for k in prefs.get("include_keywords", []):
-        if k.lower() in text:
-            s += 4
+    keywords = prefs.get("include_keywords", []) or []
+    matches = 0
+    for k in keywords:
+        k = str(k).lower().strip()
+        if k and k in text:
+            matches += 1
 
-    for k in prefs.get("exclude_keywords", []):
-        if k.lower() in text:
-            s -= 5
+    # ---------------- conflict logic ----------------
+    if conflict:
+        if matches == 0:
+            return 0
+        else:
+            return 10
 
-    try:
-        s += float(ex.get("confidence",0.5))*2
-    except:
-        pass
+    # ---------------- non-conflict base ----------------
+    score += 15
 
-    return s
+    if ex.get("rsvp_url"):
+        score += 5
+
+    if ex.get("location"):
+        score += 5
+
+    if ex.get("start_time"):
+        score += 5
+
+    # ---------------- keyword scoring ----------------
+    if matches > 0:
+        score += 40
+        score += (matches - 1) * 7.5
+
+    return score
 
 
 def build_calendar_event(ex: dict) -> dict:
@@ -587,7 +592,7 @@ def dashboard(request: Request):
         conflict = has_conflict(st, et, busy)
 
         raw = score_event(ex, prefs, conflict)
-        pct = int(min(100, max(0, raw * 10)))
+        pct = int(min(100, max(0, raw)))
 
         ex["start_pretty"] = _pretty(st)
         ex["end_pretty"] = _pretty(et)
