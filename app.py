@@ -674,7 +674,8 @@ def dashboard(request: Request):
     )
 
     # Save for add-to-calendar: use the same ordering shown on page
-    request.session["last_top5"] = all_events
+    request.session["last_events"] = all_events
+    request.session["notice_groups"] = notice_groups  
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -729,27 +730,19 @@ def build_deadline_reminder_event(n: dict) -> dict:
 @app.post("/calendar/add")
 def add_to_calendar(request: Request, idx: int = Form(...)):
     if not request.session.get("google_creds"):
-        return RedirectResponse("/login", status_code=303)
+        return RedirectResponse("/login")
 
-    top5 = request.session.get("last_top5") or []
-    logging.warning(f"calendar/add idx={idx} last_top5_len={len(top5)}")
-
-    if not top5:
-        return HTMLResponse(
-            "Your session does not have a generated Top 5 list. Please go back to Dashboard and generate again.",
-            status_code=400,
-        )
-
-    if idx < 1 or idx > len(top5):
-        return HTMLResponse("Invalid selection", status_code=400)
+    events = request.session.get("last_events") or request.session.get("last_top5") or []
+    if idx < 1 or idx > len(events):
+        return HTMLResponse("Invalid selection. Go back to Dashboard and refresh.", status_code=400)
 
     creds = ensure_valid_creds(creds_from_session(request.session))
     request.session["google_creds"] = creds_to_session(creds)
     cal = cal_service(creds)
 
-    ex = top5[idx - 1]["extracted"]
+    ex = events[idx - 1]["extracted"]
     body = build_calendar_event(ex)
-    _created = calendar_insert(cal, body)
+    calendar_insert(cal, body)
 
     return RedirectResponse("/dashboard", status_code=303)
 
@@ -759,7 +752,15 @@ def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...))
         return RedirectResponse("/login")
 
     ng = request.session.get("notice_groups") or {}
+
+    # DEBUG
+    logging.warning(f"add_deadline DEBUG received group={group!r} idx={idx} session_keys={list(ng.keys())}")
+
     items = ng.get(group) or []
+
+    # DEBUG
+    logging.warning(f"add_deadline DEBUG items_len={len(items)}")
+
     if idx < 1 or idx > len(items):
         return HTMLResponse("Invalid selection", status_code=400)
 
@@ -774,5 +775,6 @@ def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...))
 
     body = build_deadline_reminder_event(n)
     calendar_insert(cal, body)
-    logging.warning(f"add_deadline group={group} idx={idx} items={len(items)} deadline_date={n.get('deadline_date')!r}")
+
+    logging.warning(f"add_deadline OK group={group} idx={idx} items={len(items)} deadline_date={n.get('deadline_date')!r}")
     return RedirectResponse("/dashboard", status_code=303)
