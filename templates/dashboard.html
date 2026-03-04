@@ -286,7 +286,7 @@ a{ color:#9cc0ff; }
 
       <!-- COURSE REQUIREMENTS -->
       <h3>Course Requirements</h3>
-      {% set items = notice_groups.course_requirement if notice_groups and notice_groups.course_requirement else [] %}
+      {% set items = notice_groups.get('course_requirement', []) if notice_groups else [] %}
       {% if items|length == 0 %}
         <div class="empty">No course requirements.</div>
       {% else %}
@@ -311,7 +311,7 @@ a{ color:#9cc0ff; }
 
       <!-- PROFESSOR NOTICES -->
       <h3>Professor Notices</h3>
-      {% set items = notice_groups.professor_notice if notice_groups and notice_groups.professor_notice else [] %}
+      {% set items = notice_groups.get('professor_notice', []) if notice_groups else [] %}
       {% if items|length == 0 %}
         <div class="empty">No professor notices.</div>
       {% else %}
@@ -336,7 +336,7 @@ a{ color:#9cc0ff; }
 
       <!-- SCHOOL NOTICES -->
       <h3>School Notices</h3>
-      {% set items = notice_groups.school_notice if notice_groups and notice_groups.school_notice else [] %}
+      {% set items = notice_groups.get('school_notice', []) if notice_groups else [] %}
       {% if items|length == 0 %}
         <div class="empty">No school notices.</div>
       {% else %}
@@ -361,7 +361,7 @@ a{ color:#9cc0ff; }
 
       <!-- OTHER -->
       <h3>Other</h3>
-      {% set items = notice_groups.other if notice_groups and notice_groups.other else [] %}
+      {% set items = notice_groups.get('other', []) if notice_groups else [] %}
       {% if items|length == 0 %}
         <div class="empty">No other notices.</div>
       {% else %}

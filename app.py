@@ -6,17 +6,16 @@ import os
 import re
 import logging
 import time
-from openai import APIConnectionError, APITimeoutError, RateLimitError
+import secrets
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 from dateutil import parser, tz
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
-from fastapi.responses import JSONResponse
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -24,8 +23,9 @@ from google.auth.transport.requests import Request as GRequest
 from googleapiclient.discovery import build
 
 from openai import OpenAI
-import openai, logging
-logging.warning(f"OpenAI SDK version: {getattr(openai, '__version__', 'unknown')}")
+import openai as openai_pkg
+
+logging.warning(f"OpenAI SDK version: {getattr(openai_pkg, '__version__', 'unknown')}")
 
 # ---------------- Config ----------------
 APP_SECRET = os.getenv("SESSION_SECRET", "dev-secret-change-me")
@@ -35,9 +35,7 @@ REDIRECT_URI = f"{BASE_URL}/auth/callback"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# OAuth client JSON comes from env var (base64-encoded), so you don't need to ship a file
 OAUTH_CLIENT_JSON_B64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64", "")
-
 NY_TZ = tz.gettz("America/New_York")
 
 SCOPES = [
@@ -49,13 +47,31 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
 ]
 
-# For “Columbia-related”: Gmail search can match body/subject/snippet.
-# We'll require "columbia" keyword + recent window.
-GMAIL_QUERY = 'columbia newer_than:30d'
+GMAIL_QUERY = "columbia newer_than:30d"
 
 templates = Jinja2Templates(directory="templates")
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=APP_SECRET)
+
+# ---------------- Tiny server-side cache (fix cookie-session too large) ----------------
+# NOTE: single-instance safe. Multi-instance Render may lose cache if request hits another instance.
+_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+CACHE_TTL_SECONDS = int(os.getenv("DASH_CACHE_TTL_SECONDS", "1200"))  # 20 minutes
+
+
+def _cache_set(key: str, value: Dict[str, Any], ttl_seconds: int = CACHE_TTL_SECONDS) -> None:
+    _CACHE[key] = (time.time() + ttl_seconds, value)
+
+
+def _cache_get(key: str) -> Optional[Dict[str, Any]]:
+    item = _CACHE.get(key)
+    if not item:
+        return None
+    exp, val = item
+    if time.time() > exp:
+        _CACHE.pop(key, None)
+        return None
+    return val
 
 
 # ---------------- Helpers: OAuth ----------------
@@ -65,12 +81,14 @@ def oauth_client_config() -> dict:
     raw = base64.b64decode(OAUTH_CLIENT_JSON_B64).decode("utf-8")
     return json.loads(raw)
 
+
 def build_flow() -> Flow:
     return Flow.from_client_config(
         oauth_client_config(),
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
+
 
 def creds_from_session(sess: dict) -> Optional[Credentials]:
     data = sess.get("google_creds")
@@ -85,6 +103,7 @@ def creds_from_session(sess: dict) -> Optional[Credentials]:
         scopes=data.get("scopes"),
     )
 
+
 def creds_to_session(creds: Credentials) -> dict:
     return {
         "token": creds.token,
@@ -94,6 +113,7 @@ def creds_to_session(creds: Credentials) -> dict:
         "client_secret": creds.client_secret,
         "scopes": creds.scopes,
     }
+
 
 def ensure_valid_creds(creds: Credentials) -> Credentials:
     if creds and creds.expired and creds.refresh_token:
@@ -105,35 +125,30 @@ def ensure_valid_creds(creds: Credentials) -> Credentials:
 def gmail_service(creds: Credentials):
     return build("gmail", "v1", credentials=creds)
 
+
 def cal_service(creds: Credentials):
     return build("calendar", "v3", credentials=creds)
 
-def get_user_email(creds: Credentials) -> str:
-    # Uses OAuth2 API to fetch email
-    oauth2 = build("oauth2", "v2", credentials=creds)
-    info = oauth2.userinfo().get().execute()
-    return info.get("email", "")
 
-def calendar_freebusy(cal, time_min: datetime, time_max: datetime, calendar_id: str="primary") -> list[dict]:
+def calendar_freebusy(cal, time_min: datetime, time_max: datetime, calendar_id: str = "primary") -> list[dict]:
     body = {"timeMin": time_min.isoformat(), "timeMax": time_max.isoformat(), "items": [{"id": calendar_id}]}
     resp = cal.freebusy().query(body=body).execute()
     return resp.get("calendars", {}).get(calendar_id, {}).get("busy", [])
 
-def calendar_insert(cal, event_body: dict, calendar_id: str="primary") -> dict:
+
+def calendar_insert(cal, event_body: dict, calendar_id: str = "primary") -> dict:
     return cal.events().insert(calendarId=calendar_id, body=event_body).execute()
 
 
 # ---------------- Helpers: Gmail parsing ----------------
 def _b64url_decode(data: str) -> bytes:
-    import base64
     return base64.urlsafe_b64decode(data + "==")
 
+
 def _extract_text(payload: dict) -> str:
-    # Best-effort: gather text/plain and text/html, fallback to snippet if missing
-    parts = []
     stack = [payload]
-    text_plain = []
-    text_html = []
+    text_plain: List[str] = []
+    text_html: List[str] = []
 
     while stack:
         node = stack.pop()
@@ -154,7 +169,6 @@ def _extract_text(payload: dict) -> str:
         return "\n".join(text_plain)
 
     if text_html:
-        # very light strip
         html = "\n".join(text_html)
         html = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
         html = re.sub(r"(?is)<style.*?>.*?</style>", " ", html)
@@ -166,6 +180,7 @@ def _extract_text(payload: dict) -> str:
 
     return ""
 
+
 def fetch_full_email(gmail, msg_id: str) -> dict:
     msg = gmail.users().messages().get(userId="me", id=msg_id, format="full").execute()
     payload = msg.get("payload", {})
@@ -173,15 +188,16 @@ def fetch_full_email(gmail, msg_id: str) -> dict:
     body_text = _extract_text(payload)
     return {
         "id": msg_id,
-        "threadId": msg.get("threadId",""),
-        "from": headers.get("From",""),
-        "subject": headers.get("Subject",""),
-        "date": headers.get("Date",""),
-        "snippet": msg.get("snippet",""),
-        "body_text": (body_text or msg.get("snippet",""))[:12000],
+        "threadId": msg.get("threadId", ""),
+        "from": headers.get("From", ""),
+        "subject": headers.get("Subject", ""),
+        "date": headers.get("Date", ""),
+        "snippet": msg.get("snippet", ""),
+        "body_text": (body_text or msg.get("snippet", ""))[:12000],
     }
 
-def list_message_ids(gmail, q: str, max_results: int=30) -> list[str]:
+
+def list_message_ids(gmail, q: str, max_results: int = 30) -> list[str]:
     resp = gmail.users().messages().list(userId="me", q=q, maxResults=max_results).execute()
     return [m["id"] for m in resp.get("messages", [])]
 
@@ -216,17 +232,16 @@ Rules:
 - If timezone missing in the email, assume America/New_York.
 """
 
-_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
 
-def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> dict:
+
+def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> Any:
     """
-    Calls OpenAI and expects a JSON object in the output.
-    Retries on transient connection/timeouts/rate limits.
+    Calls OpenAI and expects JSON in the output.
+    May return dict or list (we'll handle in caller).
     """
     last_err = None
-    user_text = json.dumps(payload, ensure_ascii=False)
-    # keep payload bounded (avoid huge emails)
-    user_text = user_text[:120000]
+    user_text = json.dumps(payload, ensure_ascii=False)[:120000]
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -242,12 +257,10 @@ def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> dict:
             if not text:
                 raise ValueError("Empty model output")
 
-            # If model returns fenced JSON, strip fences
             if text.startswith("```"):
                 text = text.strip("`")
-                # remove optional leading language tag
                 if "\n" in text:
-                    text = text.split("\n", 1)[1]
+                    text = text.split("\n", 1)[1].strip()
 
             return json.loads(text)
 
@@ -257,17 +270,11 @@ def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> dict:
             logging.warning(f"OpenAI retry {attempt}/{max_retries}: {type(err).__name__}: {err} (sleep {wait}s)")
             time.sleep(wait)
 
-        except json.JSONDecodeError as err:
-            # Not transient; log a short preview for debugging
-            preview = text[:300] if 'text' in locals() else ""
+        except json.JSONDecodeError:
+            preview = text[:300] if "text" in locals() else ""
             logging.warning(f"OpenAI returned non-JSON. First 300 chars: {preview}")
             raise
 
-        except Exception as err:
-            # Not transient; surface it
-            raise
-
-    # exhausted retries
     raise last_err if last_err else RuntimeError("OpenAI call failed")
 
 
@@ -288,10 +295,12 @@ def parse_dt(s):
         dt = dt.replace(tzinfo=NY_TZ)
     return dt.astimezone(timezone.utc)
 
+
 def overlaps(a_start, a_end, b_start, b_end) -> bool:
     if not a_start or not a_end or not b_start or not b_end:
         return False
     return max(a_start, b_start) < min(a_end, b_end)
+
 
 def has_conflict(st, et, busy_blocks: list[dict]) -> bool:
     if not st or not et:
@@ -303,29 +312,21 @@ def has_conflict(st, et, busy_blocks: list[dict]) -> bool:
             return True
     return False
 
-def is_past_or_yesterday(st: Optional[datetime]) -> bool:
-    if not st:
-        return False
-    now_ny = datetime.now(timezone.utc).astimezone(tz.gettz("America/New_York"))
-    st_ny = st.astimezone(tz.gettz("America/New_York"))
-    # Reject yesterday or earlier
-    return st_ny.date() <= (now_ny.date() - timedelta(days=1))
 
 def score_event(ex: dict, prefs: dict, conflict: bool) -> float:
     s = 0.0
-    if conflict:
-        s -= 5.0
-    else:
-        s += 3.0
+    s += -5.0 if conflict else 3.0
     if ex.get("rsvp_url"):
         s += 1.0
     if ex.get("location"):
         s += 0.5
     if ex.get("start_time"):
         s += 1.0
+
     inc = prefs.get("include_keywords", []) or []
     exc = prefs.get("exclude_keywords", []) or []
-    text = (ex.get("title","") + " " + ex.get("summary_en","")).lower()
+    text = (ex.get("title", "") + " " + ex.get("summary_en", "")).lower()
+
     for k in inc:
         k2 = str(k).lower().strip()
         if k2 and k2 in text:
@@ -334,27 +335,29 @@ def score_event(ex: dict, prefs: dict, conflict: bool) -> float:
         k2 = str(k).lower().strip()
         if k2 and k2 in text:
             s -= 1.0
+
     try:
         s += float(ex.get("confidence", 0.5))
     except Exception:
         pass
     return s
 
+
 def build_calendar_event(ex: dict) -> dict:
-    tz = ex.get("timezone") or "America/New_York"
+    tzid = ex.get("timezone") or "America/New_York"
     return {
         "summary": ex.get("title") or "(No title)",
         "location": ex.get("location") or "",
         "description": f"{ex.get('summary_en','')}\n\nRSVP: {ex.get('rsvp_url') or ''}".strip(),
-        "start": {"dateTime": ex.get("start_time"), "timeZone": tz},
-        "end": {"dateTime": ex.get("end_time"), "timeZone": tz},
+        "start": {"dateTime": ex.get("start_time"), "timeZone": tzid},
+        "end": {"dateTime": ex.get("end_time"), "timeZone": tzid},
     }
 
 
-# ---------------- In-memory user store (internal demo) ----------------
-# For a class demo, session storage is enough. If you want persistence, swap to SQLite.
+# ---------------- Prefs ----------------
 def get_prefs(request: Request) -> dict:
     return request.session.get("prefs") or {"include_keywords": [], "exclude_keywords": []}
+
 
 def set_prefs(request: Request, inc: list[str], exc: list[str]):
     request.session["prefs"] = {"include_keywords": inc, "exclude_keywords": exc}
@@ -364,14 +367,13 @@ def set_prefs(request: Request, inc: list[str], exc: list[str]):
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 def home(request: Request):
     logged_in = bool(request.session.get("google_creds"))
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "logged_in": logged_in
-    })
+    return templates.TemplateResponse("index.html", {"request": request, "logged_in": logged_in})
+
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
 
 @app.get("/login")
 def login(request: Request):
@@ -384,6 +386,7 @@ def login(request: Request):
     request.session["oauth_state"] = state
     return RedirectResponse(auth_url)
 
+
 @app.get("/auth/callback")
 def callback(request: Request, code: str, state: str):
     if state != request.session.get("oauth_state"):
@@ -394,17 +397,22 @@ def callback(request: Request, code: str, state: str):
     request.session["google_creds"] = creds_to_session(creds)
     return RedirectResponse("/prefs")
 
+
 @app.get("/logout")
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/")
 
+
 @app.get("/debug/openai")
 def debug_openai():
-    return JSONResponse({
-        "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
-        "key_prefix": (os.getenv("OPENAI_API_KEY","")[:3] if os.getenv("OPENAI_API_KEY") else None),
-    })
+    return JSONResponse(
+        {
+            "has_openai_key": bool(os.getenv("OPENAI_API_KEY")),
+            "key_prefix": (os.getenv("OPENAI_API_KEY", "")[:3] if os.getenv("OPENAI_API_KEY") else None),
+        }
+    )
+
 
 @app.get("/prefs", response_class=HTMLResponse)
 def prefs_page(request: Request):
@@ -412,6 +420,7 @@ def prefs_page(request: Request):
         return RedirectResponse("/login")
     prefs = get_prefs(request)
     return templates.TemplateResponse("prefs.html", {"request": request, "prefs": prefs})
+
 
 @app.post("/prefs", response_class=HTMLResponse)
 def prefs_save(request: Request, include_keywords: str = Form(""), exclude_keywords: str = Form("")):
@@ -421,45 +430,14 @@ def prefs_save(request: Request, include_keywords: str = Form(""), exclude_keywo
     return RedirectResponse("/dashboard", status_code=303)
 
 
-
-
+# ---------------- Columbia detection ----------------
 KEYWORDS = ("columbia", "sipa", "canvas")
-
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 
-def _get_header(email: dict, name: str) -> str:
-    """
-    Tries multiple places to find headers: top-level keys or email['headers'].
-    Supports headers as dict or list of {'name','value'}.
-    """
-    # common top-level shortcuts
-    if name.lower() == "from":
-        for k in ("from", "sender", "from_"):
-            v = email.get(k)
-            if isinstance(v, str) and v.strip():
-                return v
-    if name.lower() == "subject":
-        for k in ("subject", "Subject"):
-            v = email.get(k)
-            if isinstance(v, str) and v.strip():
-                return v
-
-    hdrs = email.get("headers")
-    if isinstance(hdrs, dict):
-        v = hdrs.get(name) or hdrs.get(name.lower()) or hdrs.get(name.title())
-        return v if isinstance(v, str) else ""
-    if isinstance(hdrs, list):
-        for item in hdrs:
-            if not isinstance(item, dict):
-                continue
-            if (item.get("name") or "").lower() == name.lower():
-                return item.get("value") or ""
-    return ""
 
 def is_columbia_related(email: dict) -> bool:
-    # text fields (try multiple keys)
-    subject = _get_header(email, "Subject") or (email.get("subject") or "")
-    frm = _get_header(email, "From") or (email.get("from") or "")
+    subject = (email.get("subject") or "")
+    frm = (email.get("from") or "")
     snippet = (email.get("snippet") or "")
     body = (email.get("body_text") or email.get("body") or "")
 
@@ -467,52 +445,49 @@ def is_columbia_related(email: dict) -> bool:
     if any(k in blob for k in KEYWORDS):
         return True
 
-    # sender domain
     for addr in _EMAIL_RE.findall(frm):
         domain = addr.split("@", 1)[1].lower()
         if domain == "columbia.edu" or domain.endswith(".columbia.edu"):
             return True
 
-    # optional: recipients
-    to_hdr = _get_header(email, "To") or (email.get("to") or "")
-    cc_hdr = _get_header(email, "Cc") or (email.get("cc") or "")
-    if "@columbia.edu" in (to_hdr + " " + cc_hdr).lower():
-        return True
-
     return False
+
 
 def _norm_words(xs):
     if not xs:
         return []
     return [str(x).strip().lower() for x in xs if str(x).strip()]
 
+
 def event_hits_exclude(ex: dict, prefs: dict) -> bool:
     excludes = _norm_words(prefs.get("exclude_keywords"))
     if not excludes:
         return False
-    blob = " ".join([
-        str(ex.get("title","")),
-        str(ex.get("summary_en","")),
-        str(ex.get("why_recommended_en","")),
-        str(ex.get("location","")),
-        str(ex.get("rsvp_url","")),
-    ]).lower()
+    blob = " ".join(
+        [
+            str(ex.get("title", "")),
+            str(ex.get("summary_en", "")),
+            str(ex.get("why_recommended_en", "")),
+            str(ex.get("location", "")),
+            str(ex.get("rsvp_url", "")),
+        ]
+    ).lower()
     return any(k in blob for k in excludes)
 
+
 def is_before_today(dt_utc: datetime) -> bool:
-    """Exclude any event strictly before today (NY local date)."""
     now_ny = datetime.now(timezone.utc).astimezone(NY_TZ)
     start_today_ny = now_ny.replace(hour=0, minute=0, second=0, microsecond=0)
     dt_ny = dt_utc.astimezone(NY_TZ)
     return dt_ny < start_today_ny
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     if not request.session.get("google_creds"):
         return RedirectResponse("/login")
 
-    creds = creds_from_session(request.session)
-    creds = ensure_valid_creds(creds)
+    creds = ensure_valid_creds(creds_from_session(request.session))
     request.session["google_creds"] = creds_to_session(creds)
 
     prefs = get_prefs(request)
@@ -520,43 +495,46 @@ def dashboard(request: Request):
     gmail = gmail_service(creds)
     cal = cal_service(creds)
 
-    # schedule window
     now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=30)
-    busy = calendar_freebusy(cal, time_min, time_max)
+    busy = calendar_freebusy(cal, now, now + timedelta(days=30))
 
-    # fetch columbia-related messages
     ids = list_message_ids(gmail, GMAIL_QUERY, max_results=30)
     logging.warning(f"Fetched message ids: {len(ids)}")
+
     emails = [fetch_full_email(gmail, mid) for mid in ids]
     logging.warning(f"Emails fetched: {len(emails)}")
 
-    
-    extracted = []
+    extracted: List[dict] = []
+
     for e in emails:
-        # hard guarantee: must contain "columbia" anywhere
-        if 'printed_debug' not in request.session:
-            request.session['printed_debug'] = True
-            logging.warning(f"DEBUG keys: {sorted(list(e.keys()))}")
-            logging.warning(f"DEBUG subject: {repr(e.get('subject'))}")
-            logging.warning(f"DEBUG from: {repr(e.get('from'))}")
-            logging.warning(f"DEBUG snippet: {repr(e.get('snippet'))[:200]}")
-            logging.warning(f"DEBUG body_text_len: {len((e.get('body_text') or ''))}")
-            logging.warning(f"DEBUG headers: {repr(e.get('headers'))[:400]}")
         if not is_columbia_related(e):
-            logging.warning(f"Email {e['id']} is not Columbia-related")
             continue
         try:
-            ex = llm_json(EMAIL_SYSTEM, {"email": e, "preferences": prefs, "busy_blocks": busy})
-            extracted.append(ex)
+            out = llm_json(EMAIL_SYSTEM, {"email": e, "preferences": prefs, "busy_blocks": busy})
+
+            # tolerate: dict or list-of-dict
+            if isinstance(out, dict):
+                extracted.append(out)
+            elif isinstance(out, list):
+                extracted.extend([it for it in out if isinstance(it, dict)])
+                logging.warning(f"LLM returned list; flattened. msg_id={e.get('id')}")
+            else:
+                logging.warning(f"LLM returned unexpected type={type(out).__name__}; skipped. msg_id={e.get('id')}")
+
         except Exception as err:
             logging.warning(f"LLM failed: {type(err).__name__}: {err}")
             continue
+
     logging.warning(f"Extracted items: {len(extracted)}")
-    # split outputs
-    notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter","professor_notice")]
-        # ---------------- Notices: group (course / professor / school / other) ----------------
+
+    # ---------------- Notices grouping ----------------
+    notices = [
+        x
+        for x in extracted
+        if isinstance(x, dict)
+        and x.get("category") in ("course_requirement", "school_notice", "newsletter", "professor_notice")
+    ]
+
     notice_groups = {
         "course_requirement": [],
         "professor_notice": [],
@@ -567,126 +545,82 @@ def dashboard(request: Request):
     for n in notices:
         cat = (n.get("category") or "").strip().lower()
 
-        # normalize legacy labels -> new buckets
         if cat in ("course_requirement", "course", "assignment", "deadline"):
             notice_groups["course_requirement"].append(n)
-
         elif cat in ("professor_notice", "professor", "instructor_notice", "ta_notice"):
             notice_groups["professor_notice"].append(n)
-
         elif cat in ("school_notice", "school", "department_notice", "program_notice"):
             notice_groups["school_notice"].append(n)
-
         elif cat in ("newsletter", "digest", "bulletin"):
-            # newsletters are school-wide or program-wide; put here by default
             notice_groups["school_notice"].append(n)
-
         else:
             notice_groups["other"].append(n)
 
-    # store for /calendar/add_deadline
-    request.session["notice_groups"] = notice_groups
-
-    events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
+    # ---------------- Events ranking ----------------
+    events = [x for x in extracted if isinstance(x, dict) and x.get("category") in ("campus_event", "lecture_talk")]
     logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")
-         # ---------------- Events: show ALL eligible future events ----------------
-    def _pretty(dt_utc):
-        if not dt_utc:
-            return ""
+
+    def _pretty(dt_utc: datetime) -> str:
         dt_ny = dt_utc.astimezone(NY_TZ)
         s = dt_ny.strftime("%a %b %d · %I:%M %p")
         return s.replace(" 0", " ").replace("· 0", "· ")
 
-    ranked_ok = []
-    ranked_conflict = []
-
-    skip_no_time = 0
-    skip_past = 0
-    skip_exclude = 0
+    ranked_ok: List[dict] = []
+    ranked_conflict: List[dict] = []
 
     for ex in events:
-        # exclude keyword hard filter
         if event_hits_exclude(ex, prefs):
-            skip_exclude += 1
             continue
 
-        # parse times
-        try:
-            logging.warning(f"EVENT DEBUG title={ex.get('title')!r} start={ex.get('start_time')!r} end={ex.get('end_time')!r}")
-            st = parse_dt(ex.get("start_time"))
-            et = parse_dt(ex.get("end_time"))
-        except Exception:
-            st = None
-            et = None
-
+        st = parse_dt(ex.get("start_time"))
+        et = parse_dt(ex.get("end_time"))
         if not st or not et:
-            skip_no_time += 1
             continue
-
         if is_before_today(st):
-            skip_past += 1
             continue
 
         conflict = has_conflict(st, et, busy)
 
-        # score: higher = more recommended
-        try:
-            raw = score_event(ex, prefs, conflict)
-        except Exception:
-            raw = 0.0
-
-        # normalize score to 0~100 for UI
-        if raw <= 1.0:
-            pct = int(round(raw * 100))
-        else:
-            pct = int(round(raw))
+        raw = score_event(ex, prefs, conflict)
+        pct = int(round(raw * 100)) if raw <= 1.0 else int(round(raw))
         pct = max(0, min(100, pct))
 
-        # attach UI fields
         ex["start_pretty"] = _pretty(st)
         ex["end_pretty"] = _pretty(et)
 
         item = {"extracted": ex, "score": raw, "score_pct": pct, "conflict": bool(conflict)}
-
-        if conflict:
-            ranked_conflict.append(item)
-        else:
-            ranked_ok.append(item)
+        (ranked_conflict if conflict else ranked_ok).append(item)
 
     ranked_ok.sort(key=lambda x: x["score"], reverse=True)
     ranked_conflict.sort(key=lambda x: x["score"], reverse=True)
-
-    # all_events: non-conflict first, conflicts last
     all_events = ranked_ok + ranked_conflict
 
-    logging.warning(
-        f"Events pipeline NEW: total_events={len(events)} "
-        f"ok={len(ranked_ok)} conflict={len(ranked_conflict)} "
-        f"skip_no_time={skip_no_time} skip_past={skip_past} skip_exclude={skip_exclude}"
+    # ---------------- Store in server cache (NOT session) ----------------
+    dash_key = secrets.token_urlsafe(16)
+    _cache_set(
+        dash_key,
+        {
+            "events": all_events,
+            "notice_groups": notice_groups,
+        },
     )
-
-    # Save for add-to-calendar: use the same ordering shown on page
-    request.session["last_events"] = all_events
-    request.session["notice_groups"] = notice_groups  
+    request.session["dash_key"] = dash_key
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "prefs": prefs,
-            "events": all_events,              # NEW
-            "notice_groups": notice_groups,    # NEW
+            "events": all_events,
+            "notice_groups": notice_groups,
         },
     )
 
+
 def build_deadline_reminder_event(n: dict) -> dict:
-    """
-    Creates a non-blocking calendar reminder (transparency=transparent).
-    If only date exists, default to 09:00 America/New_York.
-    """
     title = n.get("title") or "Deadline Reminder"
     date = n.get("deadline_date")  # YYYY-MM-DD
-    t = n.get("deadline_time")     # HH:MM or None
+    t = n.get("deadline_time")  # HH:MM or None
     tzid = n.get("deadline_tz") or "America/New_York"
 
     if not date:
@@ -695,10 +629,7 @@ def build_deadline_reminder_event(n: dict) -> dict:
     if not t:
         t = "09:00"
 
-    # Use local timezone explicitly
     start_dt = f"{date}T{t}:00"
-    # short duration (5 minutes) to avoid looking like a meeting
-    # and set transparency transparent so it doesn't block time
     end_dt = start_dt
 
     desc = (n.get("summary_en") or "").strip()
@@ -710,21 +641,20 @@ def build_deadline_reminder_event(n: dict) -> dict:
         "description": desc,
         "start": {"dateTime": start_dt, "timeZone": tzid},
         "end": {"dateTime": end_dt, "timeZone": tzid},
-        "transparency": "transparent",   # IMPORTANT: does not block free/busy
-        "reminders": {
-            "useDefault": False,
-            "overrides": [
-                {"method": "popup", "minutes": 0}
-            ]
-        }
+        "transparency": "transparent",
+        "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 0}]},
     }
+
 
 @app.post("/calendar/add")
 def add_to_calendar(request: Request, idx: int = Form(...)):
     if not request.session.get("google_creds"):
         return RedirectResponse("/login")
 
-    events = request.session.get("last_events") or request.session.get("last_top5") or []
+    dash_key = request.session.get("dash_key")
+    blob = _cache_get(dash_key) if dash_key else None
+    events = (blob or {}).get("events") or []
+
     if idx < 1 or idx > len(events):
         return HTMLResponse("Invalid selection. Go back to Dashboard and refresh.", status_code=400)
 
@@ -738,26 +668,23 @@ def add_to_calendar(request: Request, idx: int = Form(...)):
 
     return RedirectResponse("/dashboard", status_code=303)
 
+
 @app.post("/calendar/add_deadline")
 def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...)):
     if not request.session.get("google_creds"):
         return RedirectResponse("/login")
 
-    ng = request.session.get("notice_groups") or {}
+    dash_key = request.session.get("dash_key")
+    blob = _cache_get(dash_key) if dash_key else None
+    notice_groups = (blob or {}).get("notice_groups") or {}
 
-    # DEBUG
-    logging.warning(f"add_deadline DEBUG received group={group!r} idx={idx} session_keys={list(ng.keys())}")
-
-    items = ng.get(group) or []
-
-    # DEBUG
-    logging.warning(f"add_deadline DEBUG items_len={len(items)}")
+    items = notice_groups.get(group) or []
+    logging.warning(f"add_deadline group={group!r} idx={idx} items_len={len(items)} dash_key_ok={bool(blob)}")
 
     if idx < 1 or idx > len(items):
-        return HTMLResponse("Invalid selection", status_code=400)
+        return HTMLResponse("Invalid selection. Go back to Dashboard and refresh.", status_code=400)
 
     n = items[idx - 1]
-
     if not n.get("deadline_date"):
         return HTMLResponse("This item has no deadline_date to add.", status_code=400)
 
@@ -768,5 +695,4 @@ def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...))
     body = build_deadline_reminder_event(n)
     calendar_insert(cal, body)
 
-    logging.warning(f"add_deadline OK group={group} idx={idx} items={len(items)} deadline_date={n.get('deadline_date')!r}")
     return RedirectResponse("/dashboard", status_code=303)
