@@ -24,7 +24,8 @@ from google.auth.transport.requests import Request as GRequest
 from googleapiclient.discovery import build
 
 from openai import OpenAI
-
+import openai, logging
+logging.warning(f"OpenAI SDK version: {getattr(openai, '__version__', 'unknown')}")
 
 # ---------------- Config ----------------
 APP_SECRET = os.getenv("SESSION_SECRET", "dev-secret-change-me")
