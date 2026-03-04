@@ -14,7 +14,7 @@
   --muted:#a9b6d6;
   --blue:#4da3ff;
   --btn:#2f6fed;
-  --good:#44d37b;
+  --danger:#ff6b6b;
 }
 
 body{
@@ -27,7 +27,7 @@ body{
 }
 
 .wrap{
-  max-width:1100px;
+  max-width:1120px;
   margin:auto;
   padding:44px 18px 72px;
 }
@@ -59,12 +59,11 @@ body{
   text-decoration:none;
   font-size:15px;
 }
-
 .nav a:hover{ color:white; text-decoration:underline; }
 
 .grid{
   display:grid;
-  grid-template-columns:1.2fr 0.8fr;
+  grid-template-columns: 1.25fr 0.75fr;
   gap:18px;
   margin-top:22px;
 }
@@ -79,6 +78,7 @@ body{
 }
 
 h2{ margin:0 0 10px; font-size:20px; }
+h3{ margin:16px 0 8px; font-size:16px; color: var(--text); }
 
 .empty{ color:var(--muted); font-size:15px; padding:8px 0; }
 
@@ -86,7 +86,6 @@ h2{ margin:0 0 10px; font-size:20px; }
   border-top:1px solid var(--line);
   padding:14px 0;
 }
-
 .item:first-child{ border-top:none; padding-top:0; }
 
 .title{
@@ -110,6 +109,11 @@ h2{ margin:0 0 10px; font-size:20px; }
   padding:4px 10px;
   font-size:12px;
   color:var(--muted);
+}
+
+.pill.danger{
+  border-color: rgba(255,107,107,.55);
+  color: #ffc1c1;
 }
 
 .summary{
@@ -137,17 +141,22 @@ h2{ margin:0 0 10px; font-size:20px; }
 .fill{
   height:100%;
   width:0%;
-  background: linear-gradient(90deg, rgba(77,163,255,.9), rgba(68,211,123,.9));
+  background: linear-gradient(90deg, rgba(77,163,255,.9), rgba(125,219,255,.85));
 }
 
 .scoretext{
   font-size:13px;
   color:var(--muted);
-  min-width:120px;
+  min-width:130px;
   text-align:right;
 }
 
-.btnrow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+.btnrow{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:12px;
+}
 
 .btn{
   background:var(--btn);
@@ -167,32 +176,40 @@ h2{ margin:0 0 10px; font-size:20px; }
   display:inline-block;
 }
 
-.btn:hover{ filter:brightness(1.07); }
-
-.bulletin{
-  white-space:pre-wrap;
-  line-height:1.45;
-  font-size:15px;
+.btn.small{
+  padding:8px 10px;
+  font-size:13px;
+  border-radius:10px;
 }
+
+.btn:hover{ filter:brightness(1.07); }
 
 .notice{
   border-top:1px solid var(--line);
   padding:12px 0;
 }
-
 .notice:first-child{ border-top:none; padding-top:0; }
 
-.small{ color:var(--muted); font-size:13px; margin-top:10px; line-height:1.45; }
+.small{
+  color:var(--muted);
+  font-size:13px;
+  margin-top:10px;
+  line-height:1.45;
+}
+
 a{ color:#9cc0ff; }
 </style>
 </head>
 
 <body>
 <div class="wrap">
+
   <div class="topbar">
     <div>
       <div class="brand">Columbia Campus Navigator</div>
-      <div class="subtitle">Weekly digest: Top events (no conflicts, not in the past) + course / school notices.</div>
+      <div class="subtitle">
+        All eligible events ranked by AI relevance (excluded: past events and excluded keywords). Conflicting events are labeled and placed last.
+      </div>
     </div>
     <div class="nav">
       <a href="/prefs">Preferences</a>
@@ -202,74 +219,177 @@ a{ color:#9cc0ff; }
   </div>
 
   <div class="grid">
-    <!-- LEFT -->
-    <div class="card">
-      <h2>Weekly Top 5 Events (next 7 days)</h2>
 
-      {% if not top5 %}
-        <div class="empty">No eligible events found in the next 7 days.</div>
-        <div class="small">If this stays empty, events may be filtered out due to time parsing, being in the past, calendar conflicts, or being outside the 7-day window.</div>
+    <!-- LEFT: EVENTS -->
+    <div class="card">
+      <h2>Events (Ranked)</h2>
+
+      {% if not events or events|length == 0 %}
+        <div class="empty">No eligible events found.</div>
       {% endif %}
 
-      {% for item in top5 %}
-      <div class="item">
-        <div class="title">{{ loop.index }}. {{ item.extracted.title }}</div>
-
-        <div class="meta">
-          <span class="pill">When: {{ item.extracted.start_pretty }} → {{ item.extracted.end_pretty }}</span>
-          {% if item.extracted.location %}<span class="pill">Where: {{ item.extracted.location }}</span>{% endif %}
-        </div>
-
-        <div class="scorewrap">
-          <div class="bar">
-            <div class="fill" style="width: {{ item.score_pct }}%;"></div>
+      {% for item in events %}
+        <div class="item">
+          <div class="title">
+            {{ loop.index }}. {{ item.extracted.title }}
+            {% if item.conflict %}
+              <span class="pill danger">CONFLICT</span>
+            {% endif %}
           </div>
-          <div class="scoretext">AI relevance: {{ item.score_pct }}%</div>
-        </div>
 
-        {% if item.extracted.summary_en %}
-          <div class="summary"><b>Summary:</b> {{ item.extracted.summary_en }}</div>
-        {% endif %}
-        {% if item.extracted.why_recommended_en %}
-          <div class="summary"><b>Why recommended:</b> {{ item.extracted.why_recommended_en }}</div>
-        {% endif %}
+          <div class="meta">
+            {% if item.extracted.start_pretty and item.extracted.end_pretty %}
+              <span class="pill">When: {{ item.extracted.start_pretty }} → {{ item.extracted.end_pretty }}</span>
+            {% else %}
+              <span class="pill">When: {{ item.extracted.start_time }} → {{ item.extracted.end_time }}</span>
+            {% endif %}
+            {% if item.extracted.location %}
+              <span class="pill">Where: {{ item.extracted.location }}</span>
+            {% endif %}
+          </div>
 
-        <div class="btnrow">
-          {% if item.extracted.rsvp_url %}
-            <a class="btn secondary" href="{{ item.extracted.rsvp_url }}" target="_blank">Registration Link</a>
+          <div class="scorewrap">
+            <div class="bar">
+              <div class="fill" style="width: {{ item.score_pct }}%;"></div>
+            </div>
+            <div class="scoretext">AI relevance: {{ item.score_pct }}%</div>
+          </div>
+
+          {% if item.extracted.summary_en %}
+            <div class="summary"><b>Summary:</b> {{ item.extracted.summary_en }}</div>
+          {% endif %}
+          {% if item.extracted.why_recommended_en %}
+            <div class="summary"><b>Why recommended:</b> {{ item.extracted.why_recommended_en }}</div>
           {% endif %}
 
-          <form action="/calendar/add" method="post" style="margin:0;">
-            <input type="hidden" name="idx" value="{{ loop.index }}"/>
-            <button class="btn" type="submit">Add to Google Calendar</button>
-          </form>
+          <div class="btnrow">
+            {% if item.extracted.rsvp_url %}
+              <a class="btn secondary" href="{{ item.extracted.rsvp_url }}" target="_blank">Registration Link</a>
+            {% endif %}
+
+            <form action="/calendar/add" method="post" style="margin:0;">
+              <input type="hidden" name="idx" value="{{ loop.index }}"/>
+              <button class="btn" type="submit">Add to Google Calendar</button>
+            </form>
+          </div>
         </div>
-      </div>
       {% endfor %}
+
+      <div class="small">
+        Tip: “CONFLICT” means the time overlaps with an existing calendar block. These events do not block recommendations and are shown last.
+      </div>
     </div>
 
-    <!-- RIGHT -->
+    <!-- RIGHT: NOTICES -->
     <div class="card">
-      <h2>Course / Professor / School Notices</h2>
+      <h2>Notices (Grouped)</h2>
 
-      {% if notice_bulletin %}
-        <div class="bulletin">{{ notice_bulletin }}</div>
+      <!-- COURSE REQUIREMENTS -->
+      <h3>Course Requirements</h3>
+      {% set items = notice_groups.course_requirement if notice_groups and notice_groups.course_requirement else [] %}
+      {% if items|length == 0 %}
+        <div class="empty">No course requirements.</div>
       {% else %}
-        <div class="empty">No bulletin summary available.</div>
-      {% endif %}
+        {% for n in items %}
+          <div class="notice">
+            <div class="title">{{ loop.index }}. {{ n.title }}</div>
+            {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
 
-      <h2 style="margin-top:18px;">Items</h2>
-      {% if notice_items %}
-        {% for n in notice_items %}
-        <div class="notice">
-          <div class="title">{{ loop.index }}. [{{ n.category }}] {{ n.title }}</div>
-          {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
-        </div>
+            {% if n.deadline_date %}
+              <div class="meta">
+                <span class="pill">Deadline: {{ n.deadline_date }}{% if n.deadline_time %} {{ n.deadline_time }}{% endif %}</span>
+              </div>
+              <form action="/calendar/add_deadline" method="post" style="margin-top:10px;">
+                <input type="hidden" name="group" value="course_requirement"/>
+                <input type="hidden" name="idx" value="{{ loop.index }}"/>
+                <button class="btn small" type="submit">Add Deadline Reminder (9:00 AM default)</button>
+              </form>
+            {% endif %}
+          </div>
         {% endfor %}
-      {% else %}
-        <div class="empty">No notice items.</div>
       {% endif %}
+
+      <!-- PROFESSOR NOTICES -->
+      <h3>Professor Notices</h3>
+      {% set items = notice_groups.professor_notice if notice_groups and notice_groups.professor_notice else [] %}
+      {% if items|length == 0 %}
+        <div class="empty">No professor notices.</div>
+      {% else %}
+        {% for n in items %}
+          <div class="notice">
+            <div class="title">{{ loop.index }}. {{ n.title }}</div>
+            {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
+
+            {% if n.deadline_date %}
+              <div class="meta">
+                <span class="pill">Deadline: {{ n.deadline_date }}{% if n.deadline_time %} {{ n.deadline_time }}{% endif %}</span>
+              </div>
+              <form action="/calendar/add_deadline" method="post" style="margin-top:10px;">
+                <input type="hidden" name="group" value="professor_notice"/>
+                <input type="hidden" name="idx" value="{{ loop.index }}"/>
+                <button class="btn small" type="submit">Add Deadline Reminder (9:00 AM default)</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      <!-- SCHOOL NOTICES -->
+      <h3>School Notices</h3>
+      {% set items = notice_groups.school_notice if notice_groups and notice_groups.school_notice else [] %}
+      {% if items|length == 0 %}
+        <div class="empty">No school notices.</div>
+      {% else %}
+        {% for n in items %}
+          <div class="notice">
+            <div class="title">{{ loop.index }}. {{ n.title }}</div>
+            {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
+
+            {% if n.deadline_date %}
+              <div class="meta">
+                <span class="pill">Deadline: {{ n.deadline_date }}{% if n.deadline_time %} {{ n.deadline_time }}{% endif %}</span>
+              </div>
+              <form action="/calendar/add_deadline" method="post" style="margin-top:10px;">
+                <input type="hidden" name="group" value="school_notice"/>
+                <input type="hidden" name="idx" value="{{ loop.index }}"/>
+                <button class="btn small" type="submit">Add Deadline Reminder (9:00 AM default)</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      <!-- OTHER -->
+      <h3>Other</h3>
+      {% set items = notice_groups.other if notice_groups and notice_groups.other else [] %}
+      {% if items|length == 0 %}
+        <div class="empty">No other notices.</div>
+      {% else %}
+        {% for n in items %}
+          <div class="notice">
+            <div class="title">{{ loop.index }}. {{ n.title }}</div>
+            {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
+
+            {% if n.deadline_date %}
+              <div class="meta">
+                <span class="pill">Deadline: {{ n.deadline_date }}{% if n.deadline_time %} {{ n.deadline_time }}{% endif %}</span>
+              </div>
+              <form action="/calendar/add_deadline" method="post" style="margin-top:10px;">
+                <input type="hidden" name="group" value="other"/>
+                <input type="hidden" name="idx" value="{{ loop.index }}"/>
+                <button class="btn small" type="submit">Add Deadline Reminder (9:00 AM default)</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      <div class="small">
+        Deadline reminders are created as <b>non-blocking</b> calendar items (transparent). If only a date is available, the reminder defaults to 9:00 AM.
+      </div>
+
     </div>
+
   </div>
 </div>
 </body>

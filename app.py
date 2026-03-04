@@ -194,7 +194,7 @@ You will classify a Columbia-related email and extract structured information.
 Return ONLY valid JSON (no markdown).
 Schema:
 {
-  "category": "course_requirement|campus_event|lecture_talk|school_notice|newsletter|other",
+  "category": "course_requirement|professor_notice|school_notice|other_notice|campus_event|lecture_talk|newsletter|other",
   "confidence": 0-1,
   "title": "...",
   "start_time": "ISO8601 with timezone offset or null",
@@ -205,7 +205,17 @@ Schema:
   "rsvp_url": "string or null",
   "summary_en": "concise English summary (<=70 words)",
   "why_recommended_en": "short reason (<=45 words)"
+  “deadline_date: YYYY-MM-DD or null
+  "deadline_time: HH:MM(24h) or null
+  "deadline_tz: default "America/New_York"
 }
+
+For notices (course/professor/school):
+- If there is a deadline/due date, extract deadline_date as YYYY-MM-DD.
+- If there is a specific time, also extract deadline_time as HH:MM (24-hour).
+- If only a date is provided, set deadline_time = null (backend will default to 09:00).
+- If no deadline exists, set deadline_date = null.
+- If deadline_date exists, set deadline_tz = "America/New_York" by default.
 
 Rules:
 - If this is NOT an event/lecture, set start_time/end_time/location/rsvp_url to null.
@@ -471,6 +481,31 @@ def is_columbia_related(email: dict) -> bool:
 
     return False
 
+def _norm_words(xs):
+    if not xs:
+        return []
+    return [str(x).strip().lower() for x in xs if str(x).strip()]
+
+def event_hits_exclude(ex: dict, prefs: dict) -> bool:
+    excludes = _norm_words(prefs.get("exclude_keywords"))
+    if not excludes:
+        return False
+    blob = " ".join([
+        str(ex.get("title","")),
+        str(ex.get("summary_en","")),
+        str(ex.get("why_recommended_en","")),
+        str(ex.get("location","")),
+        str(ex.get("rsvp_url","")),
+    ]).lower()
+    return any(k in blob for k in excludes)
+
+def is_before_today(dt_utc: datetime) -> bool:
+    """Exclude any event strictly before today (NY local date)."""
+    now_ny = datetime.now(timezone.utc).astimezone(NY_TZ)
+    start_today_ny = now_ny.replace(hour=0, minute=0, second=0, microsecond=0)
+    dt_ny = dt_utc.astimezone(NY_TZ)
+    return dt_ny < start_today_ny
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     if not request.session.get("google_creds"):
@@ -520,127 +555,158 @@ def dashboard(request: Request):
             continue
     logging.warning(f"Extracted items: {len(extracted)}")
     # split outputs
-    notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter")]
+    notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter","professor_notice")]
+    notice_groups = {
+    "course_requirement": [],
+    "professor_notice": [],
+    "school_notice": [],
+    "other": [],
+    }   
+
+    request.session["notice_groups"] = notice_groups
+
+    for n in notices:
+        cat = (n.get("category") or "").lower()
+        if cat == "course_requirement":
+            notice_groups["course_requirement"].append(n)
+        elif cat == "professor_notice":
+            notice_groups["professor_notice"].append(n)
+        elif cat == "school_notice":
+            notice_groups["school_notice"].append(n)
+        elif cat == "newsletter":
+            notice_groups["newsletter"].append(n)
+        else:
+            notice_groups["other"].append(n)
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
     logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")
-        # --- DEBUG why Top5 is empty ---
-    skip_no_time = 0
-    skip_past = 0
-    skip_conflict = 0
-    skip_outside_7d = 0
-
-    candidates = []
-    now_utc = datetime.now(timezone.utc)
-    cutoff = now_utc + timedelta(days=7)
-
-    for ex in events:
-        try:
-            st = parse_dt(ex.get("start_time"))
-            et = parse_dt(ex.get("end_time"))
-        except Exception as err:
-            logging.warning(f"parse_dt failed: {type(err).__name__}: {err} | start={ex.get('start_time')} end={ex.get('end_time')}")
-            skip_no_time += 1
-            continue
-
-        if not st or not et:
-            skip_no_time += 1
-            continue
-        if st > cutoff:
-            skip_outside_7d += 1
-            continue
-        if is_past_or_yesterday(st):
-            skip_past += 1
-            continue
-        if has_conflict(st, et, busy):
-            skip_conflict += 1
-            continue
-
-        try:
-            score = score_event(ex, prefs, False)
-        except Exception as err:
-            logging.warning(f"score_event failed: {type(err).__name__}: {err}")
-            score = 0.0
-
-        candidates.append({"extracted": ex, "score": score})
-
-    logging.warning(
-        f"Events pipeline: total_events={len(events)} candidates={len(candidates)} "
-        f"no_time={skip_no_time} past={skip_past} conflict={skip_conflict} outside_7d={skip_outside_7d}"
-    )
-
-    candidates.sort(key=lambda x: x["score"], reverse=True)
-    top5 = candidates[:5]
-        # --- pretty time + score pct for UI ---
+         # ---------------- Events: show ALL eligible future events ----------------
     def _pretty(dt_utc):
         if not dt_utc:
             return ""
         dt_ny = dt_utc.astimezone(NY_TZ)
-        return dt_ny.strftime("%a %b %d · %-I:%M %p")  # mac/linux
-        # 如果 Render 报 %-I 不支持，就改成: dt_ny.strftime("%a %b %d · %I:%M %p").lstrip("0")
+        s = dt_ny.strftime("%a %b %d · %I:%M %p")
+        return s.replace(" 0", " ").replace("· 0", "· ")
 
-    # clamp score to 0~100 for display
-    for it in top5:
-        ex = it["extracted"]
+    ranked_ok = []
+    ranked_conflict = []
+
+    skip_no_time = 0
+    skip_past = 0
+    skip_exclude = 0
+
+    for ex in events:
+        # exclude keyword hard filter
+        if event_hits_exclude(ex, prefs):
+            skip_exclude += 1
+            continue
+
+        # parse times
         try:
             st = parse_dt(ex.get("start_time"))
             et = parse_dt(ex.get("end_time"))
         except Exception:
-            st, et = None, None
+            st = None
+            et = None
 
-        ex["start_pretty"] = _pretty(st) if st else (ex.get("start_time") or "")
-        ex["end_pretty"] = _pretty(et) if et else (ex.get("end_time") or "")
+        if not st or not et:
+            skip_no_time += 1
+            continue
 
-        raw = it.get("score", 0.0)
-        # 假设 score_event 可能是 0~1 或 0~100：都兜底
+        if is_before_today(st):
+            skip_past += 1
+            continue
+
+        conflict = has_conflict(st, et, busy)
+
+        # score: higher = more recommended
+        try:
+            raw = score_event(ex, prefs, conflict)
+        except Exception:
+            raw = 0.0
+
+        # normalize score to 0~100 for UI
         if raw <= 1.0:
             pct = int(round(raw * 100))
         else:
             pct = int(round(raw))
         pct = max(0, min(100, pct))
-        it["score_pct"] = pct
-    request.session["last_top5"] = top5   
-    # filter events: not past/yesterday, not conflicting
-    candidates = []
-    for ex in events:
-        st = parse_dt(ex.get("start_time"))
-        et = parse_dt(ex.get("end_time"))
-        if not st or not et:
-            continue
-        if is_past_or_yesterday(st):
-            continue
-        conflict = has_conflict(st, et, busy)
+
+        # attach UI fields
+        ex["start_pretty"] = _pretty(st)
+        ex["end_pretty"] = _pretty(et)
+
+        item = {"extracted": ex, "score": raw, "score_pct": pct, "conflict": bool(conflict)}
+
         if conflict:
-            continue
-        candidates.append({"extracted": ex, "score": score_event(ex, prefs, conflict)})
+            ranked_conflict.append(item)
+        else:
+            ranked_ok.append(item)
 
-    candidates.sort(key=lambda x: x["score"], reverse=True)
-    top5 = candidates[:5]
+    ranked_ok.sort(key=lambda x: x["score"], reverse=True)
+    ranked_conflict.sort(key=lambda x: x["score"], reverse=True)
 
-    # Save top5 in session for add-to-calendar
-    request.session["last_top5"] = top5
+    # all_events: non-conflict first, conflicts last
+    all_events = ranked_ok + ranked_conflict
 
-    # Create a compact notice summary (English) via LLM (optional but useful)
-    notice_summary = ""
-    if notices:
-        try:
-            summary_payload = {"notices": [{"category":n["category"],"title":n["title"],"summary":n["summary_en"]} for n in notices[:20]]}
-            notice_summary = llm_json(
-                "Summarize the following items into a concise English bulletin with headings. Return JSON: {\"bulletin\":\"...\"}",
-                summary_payload
-            ).get("bulletin","")
-        except Exception:
-            notice_summary = ""
+    logging.warning(
+        f"Events pipeline NEW: total_events={len(events)} "
+        f"ok={len(ranked_ok)} conflict={len(ranked_conflict)} "
+        f"skip_no_time={skip_no_time} skip_past={skip_past} skip_exclude={skip_exclude}"
+    )
+
+    # Save for add-to-calendar: use the same ordering shown on page
+    request.session["last_top5"] = all_events
 
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "prefs": prefs,
-            "top5": top5,
-            "notice_bulletin": notice_summary,
-            "notice_items": notices[:15],
+            "events": all_events,              # NEW
+            "notice_groups": notice_groups,    # NEW
+            "notice_bulletin": notice_summary, # 可留可删
         },
     )
+
+def build_deadline_reminder_event(n: dict) -> dict:
+    """
+    Creates a non-blocking calendar reminder (transparency=transparent).
+    If only date exists, default to 09:00 America/New_York.
+    """
+    title = n.get("title") or "Deadline Reminder"
+    date = n.get("deadline_date")  # YYYY-MM-DD
+    t = n.get("deadline_time")     # HH:MM or None
+    tzid = n.get("deadline_tz") or "America/New_York"
+
+    if not date:
+        raise ValueError("No deadline_date")
+
+    if not t:
+        t = "09:00"
+
+    # Use local timezone explicitly
+    start_dt = f"{date}T{t}:00"
+    # short duration (5 minutes) to avoid looking like a meeting
+    # and set transparency transparent so it doesn't block time
+    end_dt = start_dt
+
+    desc = (n.get("summary_en") or "").strip()
+    if n.get("source_url"):
+        desc = (desc + "\n\nLink: " + n["source_url"]).strip()
+
+    return {
+        "summary": f"⏰ {title}",
+        "description": desc,
+        "start": {"dateTime": start_dt, "timeZone": tzid},
+        "end": {"dateTime": end_dt, "timeZone": tzid},
+        "transparency": "transparent",   # IMPORTANT: does not block free/busy
+        "reminders": {
+            "useDefault": False,
+            "overrides": [
+                {"method": "popup", "minutes": 0}
+            ]
+        }
+    }
 
 @app.post("/calendar/add")
 def add_to_calendar(request: Request, idx: int = Form(...)):
@@ -666,5 +732,29 @@ def add_to_calendar(request: Request, idx: int = Form(...)):
     ex = top5[idx - 1]["extracted"]
     body = build_calendar_event(ex)
     _created = calendar_insert(cal, body)
+
+    return RedirectResponse("/dashboard", status_code=303)
+
+@app.post("/calendar/add_deadline")
+def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...)):
+    if not request.session.get("google_creds"):
+        return RedirectResponse("/login")
+
+    ng = request.session.get("notice_groups") or {}
+    items = ng.get(group) or []
+    if idx < 1 or idx > len(items):
+        return HTMLResponse("Invalid selection", status_code=400)
+
+    n = items[idx - 1]
+
+    if not n.get("deadline_date"):
+        return HTMLResponse("This item has no deadline_date to add.", status_code=400)
+
+    creds = ensure_valid_creds(creds_from_session(request.session))
+    request.session["google_creds"] = creds_to_session(creds)
+    cal = cal_service(creds)
+
+    body = build_deadline_reminder_event(n)
+    calendar_insert(cal, body)
 
     return RedirectResponse("/dashboard", status_code=303)
