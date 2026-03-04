@@ -11,26 +11,21 @@
     }
     body{
       margin:0;
-      background: radial-gradient(1200px 800px at 15% 10%, rgba(77,163,255,.15), transparent 55%),
-                  radial-gradient(900px 700px at 85% 20%, rgba(47,111,237,.12), transparent 50%),
+      background: radial-gradient(1200px 800px at 15% 10%, rgba(77,163,255,.14), transparent 55%),
+                  radial-gradient(900px 700px at 85% 20%, rgba(47,111,237,.10), transparent 50%),
                   var(--bg);
       color:var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
     }
-    .wrap{ max-width: 1040px; margin:0 auto; padding: 44px 18px 72px; }
-    .topbar{ display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:22px; }
-    .brand{ font-size: 38px; font-weight: 950; letter-spacing:.2px; color: var(--blue); line-height:1.05; }
+    .wrap{ max-width: 1040px; margin:0 auto; padding: 46px 18px 72px; }
+    .topbar{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; }
+    .brand{ font-size: 40px; font-weight: 950; letter-spacing:.2px; color: var(--blue); line-height:1.05; }
     .tag{ display:inline-block; margin-top:10px; padding:6px 10px; border:1px solid var(--line);
           border-radius:999px; color:var(--muted); font-size:13px; }
-    .nav a{ color:var(--muted); margin-left:14px; font-size:14px; text-decoration:none; }
+    .nav a{ color:var(--muted); margin-left:14px; font-size:15px; text-decoration:none; }
     .nav a:hover{ color:var(--text); text-decoration:underline; }
 
-    .hero{
-      display:grid;
-      grid-template-columns: 1.15fr .85fr;
-      gap:16px;
-      align-items:stretch;
-    }
+    .hero{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; margin-top:22px; }
     .card{
       background: rgba(16,26,51,.92);
       border:1px solid var(--line);
@@ -40,49 +35,24 @@
       backdrop-filter: blur(6px);
     }
     h2{ margin:0 0 10px; font-size:18px; }
-    .subtitle{ color:var(--muted); font-size:16px; line-height:1.5; margin:10px 0 0; }
+    .subtitle{ color:var(--muted); font-size:16px; line-height:1.5; margin-top:10px; }
     .list{ margin:12px 0 0; padding:0 0 0 18px; color:var(--muted); font-size:15px; line-height:1.55; }
     .list li{ margin:6px 0; }
     .btnrow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
     .btn{
-      display:inline-block;
-      background: var(--btn);
-      border:none;
-      color:white;
-      padding:12px 14px;
-      border-radius:14px;
-      cursor:pointer;
-      font-weight:900;
-      text-decoration:none;
-      font-size:15px;
+      display:inline-block; background: var(--btn); border:none; color:white;
+      padding:12px 14px; border-radius:14px; cursor:pointer; font-weight:950;
+      text-decoration:none; font-size:15px;
     }
     .btn.secondary{
-      background: transparent;
-      border:1px solid var(--line);
-      color:var(--text);
+      background: transparent; border:1px solid var(--line); color:var(--text);
     }
     .btn:hover{ filter: brightness(1.07); }
-    .btn.secondary:hover{ border-color:#3a4e84; }
-
-    .kpi{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:10px;
-      margin-top:12px;
-    }
-    .k{
-      border:1px solid var(--line);
-      border-radius:14px;
-      padding:12px;
-      background: rgba(12,20,40,.65);
-    }
+    .kpi{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+    .k{ border:1px solid var(--line); border-radius:14px; padding:12px; background: rgba(12,20,40,.65); }
     .k .n{ font-size:20px; font-weight:950; }
     .k .t{ color:var(--muted); font-size:13px; margin-top:4px; }
-
     .small{ color:var(--muted); font-size:13px; margin-top:10px; line-height:1.45; }
-    .footer{ margin-top:22px; color:var(--muted); font-size:13px; }
-    .footer a{ color:#9cc0ff; text-decoration:none; }
-    .footer a:hover{ text-decoration:underline; }
   </style>
 </head>
 
@@ -91,33 +61,34 @@
     <div class="topbar">
       <div>
         <div class="brand">Columbia Campus Navigator</div>
-        <div class="tag">Internal Demo • Gmail + Calendar • Weekly Digest</div>
+        <div class="tag">Internal Demo • Gmail + Calendar • AI Ranking</div>
       </div>
       <div class="nav">
         {% if logged_in %}
-          <a href="/prefs">Preferences</a>
           <a href="/dashboard">Dashboard</a>
+          <a href="/prefs">Preferences</a>
           <a href="/logout">Logout</a>
         {% else %}
           <a href="/login">Sign in</a>
+          <a href="/prefs">Preferences</a>
         {% endif %}
       </div>
     </div>
 
     <div class="hero">
       <div class="card">
-        <h2>What it does</h2>
+        <h2>What you get</h2>
         <div class="subtitle">
-          Converts Columbia-related emails into a weekly roadmap:
-          <strong>Top 5 events</strong> (no calendar conflicts, not in the past) plus
-          <strong>course / professor / school notices</strong> in a clean, readable format.
+          After you sign in with Google, the app scans Columbia-related emails (Columbia/SIPA/Canvas or columbia.edu senders),
+          classifies them with an LLM, and produces a clean dashboard:
         </div>
 
         <ul class="list">
-          <li>Filters emails that mention <strong>Columbia</strong>, <strong>SIPA</strong>, or <strong>Canvas</strong> (subject/snippet/body/sender domain).</li>
-          <li>Uses an LLM to classify: campus events, lectures/talks, course requirements, and school notices.</li>
-          <li>Extracts time, location, RSVP link, and gives a short English summary.</li>
-          <li>Lets you add a selected event directly to Google Calendar.</li>
+          <li><b>Events</b>: all eligible upcoming events ranked by AI relevance (past events and excluded keywords removed).</li>
+          <li><b>Conflict handling</b>: events that conflict with your calendar are labeled <b>CONFLICT</b> and placed last.</li>
+          <li><b>One-click actions</b>: open registration links and add events to Google Calendar.</li>
+          <li><b>Notices</b>: course/professor/school notices grouped separately (not mixed).</li>
+          <li><b>Deadlines</b>: if a notice contains a deadline, you can add a <b>non-blocking</b> reminder to your calendar (defaults to 9:00 AM if only a date is given).</li>
         </ul>
 
         <div class="btnrow">
@@ -131,40 +102,22 @@
         </div>
 
         <div class="small">
-          Note: This is a class project demo. Your account must grant Gmail read-only and Calendar permissions to generate the dashboard.
+          This is a class-project internal demo. Permissions are used only to read relevant emails and add calendar items you explicitly choose.
         </div>
       </div>
 
       <div class="card">
-        <h2>Weekly output</h2>
+        <h2>Dashboard preview</h2>
         <div class="kpi">
-          <div class="k">
-            <div class="n">Top 5</div>
-            <div class="t">Events recommended</div>
-          </div>
-          <div class="k">
-            <div class="n">0</div>
-            <div class="t">Conflicts allowed</div>
-          </div>
-          <div class="k">
-            <div class="n">7 days</div>
-            <div class="t">Rolling time window</div>
-          </div>
-          <div class="k">
-            <div class="n">1 click</div>
-            <div class="t">Add to Calendar</div>
-          </div>
+          <div class="k"><div class="n">All</div><div class="t">Eligible events listed</div></div>
+          <div class="k"><div class="n">Ranked</div><div class="t">By AI relevance score</div></div>
+          <div class="k"><div class="n">Conflict</div><div class="t">Labeled & moved last</div></div>
+          <div class="k"><div class="n">Deadlines</div><div class="t">9:00 AM reminders</div></div>
         </div>
-
-        <div class="small" style="margin-top:14px;">
-          If “Top 5” is empty, it usually means event time parsing failed or all events were filtered out as past/conflicting/outside 7 days.
-          The dashboard logs will show the breakdown.
+        <div class="small">
+          If the events list is empty, it usually means time extraction failed or everything was filtered out as past/excluded.
         </div>
       </div>
-    </div>
-
-    <div class="footer">
-      Need to adjust what counts as “Columbia-related”? Update it in Preferences or refine the filter rules in the backend.
     </div>
   </div>
 </body>

@@ -556,27 +556,37 @@ def dashboard(request: Request):
     logging.warning(f"Extracted items: {len(extracted)}")
     # split outputs
     notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter","professor_notice")]
+        # ---------------- Notices: group (course / professor / school / other) ----------------
     notice_groups = {
-    "course_requirement": [],
-    "professor_notice": [],
-    "school_notice": [],
-    "other": [],
-    }   
-
-    request.session["notice_groups"] = notice_groups
+        "course_requirement": [],
+        "professor_notice": [],
+        "school_notice": [],
+        "other": [],
+    }
 
     for n in notices:
-        cat = (n.get("category") or "").lower()
-        if cat == "course_requirement":
+        cat = (n.get("category") or "").strip().lower()
+
+        # normalize legacy labels -> new buckets
+        if cat in ("course_requirement", "course", "assignment", "deadline"):
             notice_groups["course_requirement"].append(n)
-        elif cat == "professor_notice":
+
+        elif cat in ("professor_notice", "professor", "instructor_notice", "ta_notice"):
             notice_groups["professor_notice"].append(n)
-        elif cat == "school_notice":
+
+        elif cat in ("school_notice", "school", "department_notice", "program_notice"):
             notice_groups["school_notice"].append(n)
-        elif cat == "newsletter":
-            notice_groups["newsletter"].append(n)
+
+        elif cat in ("newsletter", "digest", "bulletin"):
+            # newsletters are school-wide or program-wide; put here by default
+            notice_groups["school_notice"].append(n)
+
         else:
             notice_groups["other"].append(n)
+
+    # store for /calendar/add_deadline
+    request.session["notice_groups"] = notice_groups
+
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
     logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")
          # ---------------- Events: show ALL eligible future events ----------------
