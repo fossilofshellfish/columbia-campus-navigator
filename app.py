@@ -674,7 +674,6 @@ def dashboard(request: Request):
             "prefs": prefs,
             "events": all_events,              # NEW
             "notice_groups": notice_groups,    # NEW
-            "notice_bulletin": notice_summary, # 可留可删
         },
     )
 
