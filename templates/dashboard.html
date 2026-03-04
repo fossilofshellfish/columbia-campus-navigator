@@ -1,43 +1,276 @@
 <!doctype html>
-<html>
-<head><title>Dashboard</title></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Columbia Campus Navigator – Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+:root{
+  --bg:#0b1220;
+  --card:#101a33;
+  --line:#22325a;
+  --text:#eaf0ff;
+  --muted:#a9b6d6;
+  --blue:#4da3ff;
+  --btn:#2f6fed;
+  --good:#44d37b;
+}
+
+body{
+  margin:0;
+  background: radial-gradient(1200px 800px at 15% 10%, rgba(77,163,255,.14), transparent 55%),
+              radial-gradient(900px 700px at 85% 20%, rgba(47,111,237,.10), transparent 50%),
+              var(--bg);
+  color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+
+.wrap{
+  max-width:1100px;
+  margin:auto;
+  padding:44px 18px 72px;
+}
+
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:14px;
+}
+
+.brand{
+  font-size:38px;
+  font-weight:950;
+  color:var(--blue);
+  line-height:1.05;
+}
+
+.subtitle{
+  color:var(--muted);
+  font-size:15px;
+  margin-top:10px;
+  line-height:1.45;
+}
+
+.nav a{
+  color:var(--muted);
+  margin-left:14px;
+  text-decoration:none;
+  font-size:15px;
+}
+
+.nav a:hover{ color:white; text-decoration:underline; }
+
+.grid{
+  display:grid;
+  grid-template-columns:1.2fr 0.8fr;
+  gap:18px;
+  margin-top:22px;
+}
+
+.card{
+  background: rgba(16,26,51,.92);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:18px;
+  box-shadow: 0 14px 34px rgba(0,0,0,.30);
+  backdrop-filter: blur(6px);
+}
+
+h2{ margin:0 0 10px; font-size:20px; }
+
+.empty{ color:var(--muted); font-size:15px; padding:8px 0; }
+
+.item{
+  border-top:1px solid var(--line);
+  padding:14px 0;
+}
+
+.item:first-child{ border-top:none; padding-top:0; }
+
+.title{
+  font-size:17px;
+  font-weight:900;
+  line-height:1.25;
+}
+
+.meta{
+  margin-top:8px;
+  color:var(--muted);
+  font-size:14px;
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.pill{
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:4px 10px;
+  font-size:12px;
+  color:var(--muted);
+}
+
+.summary{
+  margin-top:10px;
+  line-height:1.55;
+  font-size:15px;
+}
+
+.scorewrap{
+  margin-top:10px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.bar{
+  flex:1;
+  height:10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background: rgba(12,20,40,.65);
+  overflow:hidden;
+}
+
+.fill{
+  height:100%;
+  width:0%;
+  background: linear-gradient(90deg, rgba(77,163,255,.9), rgba(68,211,123,.9));
+}
+
+.scoretext{
+  font-size:13px;
+  color:var(--muted);
+  min-width:120px;
+  text-align:right;
+}
+
+.btnrow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+
+.btn{
+  background:var(--btn);
+  border:none;
+  color:white;
+  padding:10px 12px;
+  border-radius:12px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+.btn.secondary{
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--text);
+  text-decoration:none;
+  display:inline-block;
+}
+
+.btn:hover{ filter:brightness(1.07); }
+
+.bulletin{
+  white-space:pre-wrap;
+  line-height:1.45;
+  font-size:15px;
+}
+
+.notice{
+  border-top:1px solid var(--line);
+  padding:12px 0;
+}
+
+.notice:first-child{ border-top:none; padding-top:0; }
+
+.small{ color:var(--muted); font-size:13px; margin-top:10px; line-height:1.45; }
+a{ color:#9cc0ff; }
+</style>
+</head>
+
 <body>
-  <h1>Weekly Dashboard</h1>
-  <p><a href="/prefs">Preferences</a> | <a href="/">Home</a> | <a href="/logout">Logout</a></p>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="brand">Columbia Campus Navigator</div>
+      <div class="subtitle">Weekly digest: Top events (no conflicts, not in the past) + course / school notices.</div>
+    </div>
+    <div class="nav">
+      <a href="/prefs">Preferences</a>
+      <a href="/">Home</a>
+      <a href="/logout">Logout</a>
+    </div>
+  </div>
 
-  <h2>Weekly Top 5 (No conflicts, not in the past)</h2>
-  {% if not top5 %}
-    <p>No eligible events found in the next 7 days.</p>
-  {% endif %}
+  <div class="grid">
+    <!-- LEFT -->
+    <div class="card">
+      <h2>Weekly Top 5 Events (next 7 days)</h2>
 
-  {% for item in top5 %}
-    <hr/>
-    <h3>{{ loop.index }}. {{ item.extracted.title }}</h3>
-    <p><b>Time:</b> {{ item.extracted.start_time }} → {{ item.extracted.end_time }}</p>
-    <p><b>Location:</b> {{ item.extracted.location }}</p>
-    <p><b>RSVP:</b> <a href="{{ item.extracted.rsvp_url }}" target="_blank">{{ item.extracted.rsvp_url }}</a></p>
-    <p><b>Summary:</b> {{ item.extracted.summary_en }}</p>
-    <p><b>Why recommended:</b> {{ item.extracted.why_recommended_en }}</p>
+      {% if not top5 %}
+        <div class="empty">No eligible events found in the next 7 days.</div>
+        <div class="small">If this stays empty, events may be filtered out due to time parsing, being in the past, calendar conflicts, or being outside the 7-day window.</div>
+      {% endif %}
 
-    <form action="/calendar/add" method="post">
-      <input type="hidden" name="idx" value="{{ loop.index }}"/>
-      <button type="submit">Add to Google Calendar</button>
-    </form>
-  {% endfor %}
+      {% for item in top5 %}
+      <div class="item">
+        <div class="title">{{ loop.index }}. {{ item.extracted.title }}</div>
 
-  <hr/>
-  <h2>Course / Professor / School Notices</h2>
-  {% if notice_bulletin %}
-    <pre style="white-space: pre-wrap;">{{ notice_bulletin }}</pre>
-  {% else %}
-    <p>No bulletin summary available.</p>
-  {% endif %}
+        <div class="meta">
+          <span class="pill">When: {{ item.extracted.start_pretty }} → {{ item.extracted.end_pretty }}</span>
+          {% if item.extracted.location %}<span class="pill">Where: {{ item.extracted.location }}</span>{% endif %}
+        </div>
 
-  <h3>Items (sample)</h3>
-  <ul>
-    {% for n in notice_items %}
-      <li><b>[{{ n.category }}]</b> {{ n.title }} — {{ n.summary_en }}</li>
-    {% endfor %}
-  </ul>
+        <div class="scorewrap">
+          <div class="bar">
+            <div class="fill" style="width: {{ item.score_pct }}%;"></div>
+          </div>
+          <div class="scoretext">AI relevance: {{ item.score_pct }}%</div>
+        </div>
+
+        {% if item.extracted.summary_en %}
+          <div class="summary"><b>Summary:</b> {{ item.extracted.summary_en }}</div>
+        {% endif %}
+        {% if item.extracted.why_recommended_en %}
+          <div class="summary"><b>Why recommended:</b> {{ item.extracted.why_recommended_en }}</div>
+        {% endif %}
+
+        <div class="btnrow">
+          {% if item.extracted.rsvp_url %}
+            <a class="btn secondary" href="{{ item.extracted.rsvp_url }}" target="_blank">Registration Link</a>
+          {% endif %}
+
+          <form action="/calendar/add" method="post" style="margin:0;">
+            <input type="hidden" name="idx" value="{{ loop.index }}"/>
+            <button class="btn" type="submit">Add to Google Calendar</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- RIGHT -->
+    <div class="card">
+      <h2>Course / Professor / School Notices</h2>
+
+      {% if notice_bulletin %}
+        <div class="bulletin">{{ notice_bulletin }}</div>
+      {% else %}
+        <div class="empty">No bulletin summary available.</div>
+      {% endif %}
+
+      <h2 style="margin-top:18px;">Items</h2>
+      {% if notice_items %}
+        {% for n in notice_items %}
+        <div class="notice">
+          <div class="title">{{ loop.index }}. [{{ n.category }}] {{ n.title }}</div>
+          {% if n.summary_en %}<div class="summary">{{ n.summary_en }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty">No notice items.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
 </body>
 </html>

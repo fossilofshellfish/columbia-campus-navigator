@@ -1,20 +1,119 @@
 <!doctype html>
-<html>
-<head><title>Preferences</title></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Columbia Campus Navigator – Preferences</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0b1220;
+  --card:#101a33;
+  --line:#22325a;
+  --text:#eaf0ff;
+  --muted:#a9b6d6;
+  --blue:#4da3ff;
+  --btn:#2f6fed;
+}
+body{
+  margin:0;
+  background: radial-gradient(1200px 800px at 15% 10%, rgba(77,163,255,.14), transparent 55%),
+              radial-gradient(900px 700px at 85% 20%, rgba(47,111,237,.10), transparent 50%),
+              var(--bg);
+  color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+.wrap{ max-width:900px; margin:auto; padding:44px 18px 72px; }
+.brand{ font-size:36px; font-weight:950; color:var(--blue); line-height:1.05; }
+.subtitle{ color:var(--muted); font-size:15px; margin-top:10px; line-height:1.45; }
+.nav{ margin-top:12px; }
+.nav a{ color:var(--muted); margin-right:14px; text-decoration:none; font-size:15px; }
+.nav a:hover{ color:white; text-decoration:underline; }
+
+.card{
+  margin-top:18px;
+  background: rgba(16,26,51,.92);
+  border:1px solid var(--line);
+  border-radius:16px;
+  padding:18px;
+  box-shadow: 0 14px 34px rgba(0,0,0,.30);
+  backdrop-filter: blur(6px);
+}
+
+label{ display:block; margin-top:14px; font-weight:900; font-size:15px; }
+.hint{ color:var(--muted); font-size:13px; margin-top:6px; line-height:1.45; }
+
+input[type="text"]{
+  width:100%;
+  box-sizing:border-box;
+  background: rgba(12,20,40,.65);
+  border:1px solid var(--line);
+  border-radius:12px;
+  color:var(--text);
+  padding:12px 12px;
+  margin-top:10px;
+  font-size:15px;
+}
+
+.btnrow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+.btn{
+  background:var(--btn);
+  border:none;
+  color:white;
+  padding:10px 14px;
+  border-radius:12px;
+  font-weight:900;
+  cursor:pointer;
+  font-size:15px;
+}
+.btn.secondary{
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--text);
+  text-decoration:none;
+  display:inline-block;
+  padding:10px 14px;
+  border-radius:12px;
+  font-weight:900;
+}
+.btn:hover{ filter:brightness(1.07); }
+.small{ color:var(--muted); font-size:13px; margin-top:10px; line-height:1.45; }
+</style>
+</head>
+
 <body>
-  <h1>Preferences</h1>
-  <p><a href="/dashboard">Go to Dashboard</a></p>
+<div class="wrap">
+  <div class="brand">Columbia Campus Navigator</div>
+  <div class="subtitle">Preferences control the “priority” signals the LLM uses for recommending events and summarizing notices.</div>
 
-  <form action="/prefs" method="post">
-    <label>Include keywords (comma-separated)</label><br/>
-    <input name="include_keywords" style="width:700px"
-      value="{{ prefs.include_keywords | join(', ') }}"/><br/><br/>
+  <div class="nav">
+    <a href="/dashboard">Back to Dashboard</a>
+    <a href="/">Home</a>
+  </div>
 
-    <label>Exclude keywords (comma-separated)</label><br/>
-    <input name="exclude_keywords" style="width:700px"
-      value="{{ prefs.exclude_keywords | join(', ') }}"/><br/><br/>
+  <div class="card">
+    <form action="/prefs" method="post">
+      <label>Include keywords (comma-separated)</label>
+      <div class="hint">Events and talks containing these terms will be scored higher (e.g., “energy, career, policy, AI”).</div>
+      <input type="text" name="include_keywords"
+        value="{{ prefs.include_keywords | join(', ') }}"
+        placeholder="energy, career, climate, AI" />
 
-    <button type="submit">Save</button>
-  </form>
+      <label>Exclude keywords (comma-separated)</label>
+      <div class="hint">Items containing these terms will be deprioritized (e.g., “finance, sales, spam”).</div>
+      <input type="text" name="exclude_keywords"
+        value="{{ prefs.exclude_keywords | join(', ') }}"
+        placeholder="finance, ads" />
+
+      <div class="btnrow">
+        <button class="btn" type="submit">Save Preferences</button>
+        <a class="btn secondary" href="/dashboard">View Dashboard</a>
+      </div>
+
+      <div class="small">
+        Tip: If Top 5 is empty, try adding a few broad include keywords (e.g., “events, talk, seminar, workshop”) and removing overly restrictive excludes.
+      </div>
+    </form>
+  </div>
+</div>
 </body>
 </html>

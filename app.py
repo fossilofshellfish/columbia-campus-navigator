@@ -209,6 +209,7 @@ Rules:
 - If this is NOT an event/lecture, set start_time/end_time/location/rsvp_url to null.
 - If start_time exists but end_time is missing, set end_time = start_time + 60 minutes.
 - Extract RSVP/registration link if present.
+- Return start_time and end_time in ISO 8601 format. If timezone missing, assume America/New_York
 """
 
 _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -494,8 +495,7 @@ def dashboard(request: Request):
     emails = [fetch_full_email(gmail, mid) for mid in ids]
     logging.warning(f"Emails fetched: {len(emails)}")
 
-    emails = emails[:8]   # 先最多 8 封
-
+    
     extracted = []
     for e in emails:
         # hard guarantee: must contain "columbia" anywhere
@@ -520,7 +520,55 @@ def dashboard(request: Request):
     # split outputs
     notices = [x for x in extracted if x.get("category") in ("course_requirement","school_notice","newsletter")]
     events = [x for x in extracted if x.get("category") in ("campus_event","lecture_talk")]
-    logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")   
+    logging.warning(f"Events: {len(events)} | Notices: {len(notices)}")
+        # --- DEBUG why Top5 is empty ---
+    skip_no_time = 0
+    skip_past = 0
+    skip_conflict = 0
+    skip_outside_7d = 0
+
+    candidates = []
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc + timedelta(days=7)
+
+    for ex in events:
+        try:
+            st = parse_dt(ex.get("start_time"))
+            et = parse_dt(ex.get("end_time"))
+        except Exception as err:
+            logging.warning(f"parse_dt failed: {type(err).__name__}: {err} | start={ex.get('start_time')} end={ex.get('end_time')}")
+            skip_no_time += 1
+            continue
+
+        if not st or not et:
+            skip_no_time += 1
+            continue
+        if st > cutoff:
+            skip_outside_7d += 1
+            continue
+        if is_past_or_yesterday(st):
+            skip_past += 1
+            continue
+        if has_conflict(st, et, busy):
+            skip_conflict += 1
+            continue
+
+        try:
+            score = score_event(ex, prefs, False)
+        except Exception as err:
+            logging.warning(f"score_event failed: {type(err).__name__}: {err}")
+            score = 0.0
+
+        candidates.append({"extracted": ex, "score": score})
+
+    logging.warning(
+        f"Events pipeline: total_events={len(events)} candidates={len(candidates)} "
+        f"no_time={skip_no_time} past={skip_past} conflict={skip_conflict} outside_7d={skip_outside_7d}"
+    )
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    top5 = candidates[:5]
+    request.session["last_top5"] = top5   
     # filter events: not past/yesterday, not conflicting
     candidates = []
     for ex in events:
