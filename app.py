@@ -38,6 +38,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # OAuth client JSON comes from env var (base64-encoded), so you don't need to ship a file
 OAUTH_CLIENT_JSON_B64 = os.getenv("GOOGLE_OAUTH_CLIENT_JSON_B64", "")
 
+NY_TZ = tz.gettz("America/New_York")
+
 SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
@@ -568,6 +570,34 @@ def dashboard(request: Request):
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
     top5 = candidates[:5]
+        # --- pretty time + score pct for UI ---
+    def _pretty(dt_utc):
+        if not dt_utc:
+            return ""
+        dt_ny = dt_utc.astimezone(NY_TZ)
+        return dt_ny.strftime("%a %b %d · %-I:%M %p")  # mac/linux
+        # 如果 Render 报 %-I 不支持，就改成: dt_ny.strftime("%a %b %d · %I:%M %p").lstrip("0")
+
+    # clamp score to 0~100 for display
+    for it in top5:
+        ex = it["extracted"]
+        try:
+            st = parse_dt(ex.get("start_time"))
+            et = parse_dt(ex.get("end_time"))
+        except Exception:
+            st, et = None, None
+
+        ex["start_pretty"] = _pretty(st) if st else (ex.get("start_time") or "")
+        ex["end_pretty"] = _pretty(et) if et else (ex.get("end_time") or "")
+
+        raw = it.get("score", 0.0)
+        # 假设 score_event 可能是 0~1 或 0~100：都兜底
+        if raw <= 1.0:
+            pct = int(round(raw * 100))
+        else:
+            pct = int(round(raw))
+        pct = max(0, min(100, pct))
+        it["score_pct"] = pct
     request.session["last_top5"] = top5   
     # filter events: not past/yesterday, not conflicting
     candidates = []
