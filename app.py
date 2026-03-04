@@ -314,32 +314,37 @@ def has_conflict(st, et, busy_blocks: list[dict]) -> bool:
 
 
 def score_event(ex: dict, prefs: dict, conflict: bool) -> float:
-    s = 0.0
-    s += -5.0 if conflict else 3.0
+    s = 0
+
+    if conflict:
+        s -= 5
+    else:
+        s += 4
+
     if ex.get("rsvp_url"):
-        s += 1.0
+        s += 2
+
     if ex.get("location"):
-        s += 0.5
+        s += 1
+
     if ex.get("start_time"):
-        s += 1.0
+        s += 1
 
-    inc = prefs.get("include_keywords", []) or []
-    exc = prefs.get("exclude_keywords", []) or []
-    text = (ex.get("title", "") + " " + ex.get("summary_en", "")).lower()
+    text = (ex.get("title","") + " " + ex.get("summary_en","")).lower()
 
-    for k in inc:
-        k2 = str(k).lower().strip()
-        if k2 and k2 in text:
-            s += 0.7
-    for k in exc:
-        k2 = str(k).lower().strip()
-        if k2 and k2 in text:
-            s -= 1.0
+    for k in prefs.get("include_keywords", []):
+        if k.lower() in text:
+            s += 4
+
+    for k in prefs.get("exclude_keywords", []):
+        if k.lower() in text:
+            s -= 5
 
     try:
-        s += float(ex.get("confidence", 0.5))
-    except Exception:
+        s += float(ex.get("confidence",0.5))*2
+    except:
         pass
+
     return s
 
 
@@ -582,8 +587,7 @@ def dashboard(request: Request):
         conflict = has_conflict(st, et, busy)
 
         raw = score_event(ex, prefs, conflict)
-        pct = int(round(raw * 100)) if raw <= 1.0 else int(round(raw))
-        pct = max(0, min(100, pct))
+        pct = int(min(100, max(0, raw * 10)))
 
         ex["start_pretty"] = _pretty(st)
         ex["end_pretty"] = _pretty(et)
