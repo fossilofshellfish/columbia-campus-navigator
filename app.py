@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
-from dateutil import parser as dtparse
+from dateutil import parser, tz
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -293,8 +293,8 @@ def has_conflict(st, et, busy_blocks: list[dict]) -> bool:
 def is_past_or_yesterday(st: Optional[datetime]) -> bool:
     if not st:
         return False
-    now_ny = datetime.now(timezone.utc).astimezone(dtparse.tz.gettz("America/New_York"))
-    st_ny = st.astimezone(dtparse.tz.gettz("America/New_York"))
+    now_ny = datetime.now(timezone.utc).astimezone(tz.gettz("America/New_York"))
+    st_ny = st.astimezone(tz.gettz("America/New_York"))
     # Reject yesterday or earlier
     return st_ny.date() <= (now_ny.date() - timedelta(days=1))
 
