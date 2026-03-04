@@ -280,13 +280,21 @@ def llm_json(system_prompt: str, payload: dict, max_retries: int = 5) -> dict:
 
 
 # ---------------- Ranking / constraints ----------------
-def parse_dt(s: Optional[str]):
+def parse_dt(s):
     if not s:
         return None
+    if isinstance(s, datetime):
+        return s if s.tzinfo else s.replace(tzinfo=NY_TZ).astimezone(timezone.utc)
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
     try:
-        return dtparse.isoparse(s)
+        dt = parser.parse(s)
     except Exception:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=NY_TZ)
+    return dt.astimezone(timezone.utc)
 
 def overlaps(a_start, a_end, b_start, b_end) -> bool:
     if not a_start or not a_end or not b_start or not b_end:
@@ -612,6 +620,7 @@ def dashboard(request: Request):
 
         # parse times
         try:
+            logging.warning(f"EVENT DEBUG title={ex.get('title')!r} start={ex.get('start_time')!r} end={ex.get('end_time')!r}")
             st = parse_dt(ex.get("start_time"))
             et = parse_dt(ex.get("end_time"))
         except Exception:
@@ -765,5 +774,5 @@ def add_deadline(request: Request, group: str = Form(...), idx: int = Form(...))
 
     body = build_deadline_reminder_event(n)
     calendar_insert(cal, body)
-
+    logging.warning(f"add_deadline group={group} idx={idx} items={len(items)} deadline_date={n.get('deadline_date')!r}")
     return RedirectResponse("/dashboard", status_code=303)
